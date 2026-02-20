@@ -433,13 +433,13 @@ export function BugTrackerPage() {
                       <motion.article
                         layout
                         draggable
-                        onDragStart={(event) => {
+                        onDragStartCapture={(event) => {
                           if (bug.id) {
                             event.dataTransfer.setData('text/plain', String(bug.id));
                             setDraggingBugId(bug.id);
                           }
                         }}
-                        onDragEnd={() => setDraggingBugId(null)}
+                        onDragEndCapture={() => setDraggingBugId(null)}
                         key={`${column.status}-${bug.id ?? index}`}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}

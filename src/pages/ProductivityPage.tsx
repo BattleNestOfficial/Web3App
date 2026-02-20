@@ -336,13 +336,13 @@ export function ProductivityPage() {
                       <motion.article
                         layout
                         draggable
-                        onDragStart={(event) => {
+                        onDragStartCapture={(event) => {
                           if (task.id) {
                             event.dataTransfer.setData('text/plain', String(task.id));
                             setDraggingTaskId(task.id);
                           }
                         }}
-                        onDragEnd={() => setDraggingTaskId(null)}
+                        onDragEndCapture={() => setDraggingTaskId(null)}
                         key={`${column.status}-${task.id ?? index}`}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
