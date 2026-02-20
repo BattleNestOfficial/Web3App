@@ -1,17 +1,198 @@
-export function toDateTimeLocalValue(timestamp: number) {
-  const date = new Date(timestamp);
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(timestamp - offset).toISOString().slice(0, 16);
+const IST_OFFSET_MINUTES = 330;
+
+const TIMEZONE_OFFSETS: Record<string, number> = {
+  UTC: 0,
+  GMT: 0,
+  IST: 330,
+  EST: -300,
+  EDT: -240,
+  CST: -360,
+  CDT: -300,
+  MST: -420,
+  MDT: -360,
+  PST: -480,
+  PDT: -420
+};
+
+const MONTHS: Record<string, number> = {
+  jan: 1,
+  january: 1,
+  feb: 2,
+  february: 2,
+  mar: 3,
+  march: 3,
+  apr: 4,
+  april: 4,
+  may: 5,
+  jun: 6,
+  june: 6,
+  jul: 7,
+  july: 7,
+  aug: 8,
+  august: 8,
+  sep: 9,
+  sept: 9,
+  september: 9,
+  oct: 10,
+  october: 10,
+  nov: 11,
+  november: 11,
+  dec: 12,
+  december: 12
+};
+
+type DateParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+};
+
+function pad2(value: number) {
+  return String(value).padStart(2, '0');
+}
+
+function normalizeHour(hour: number, meridiem?: string) {
+  const marker = (meridiem ?? '').toLowerCase();
+  if (!marker) return hour;
+  if (hour < 1 || hour > 12) return Number.NaN;
+  if (marker === 'am') return hour % 12;
+  if (marker === 'pm') return hour % 12 + 12;
+  return Number.NaN;
+}
+
+function toUtcTimestamp(parts: DateParts, offsetMinutes: number) {
+  return (
+    Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) -
+    offsetMinutes * 60_000
+  );
+}
+
+function isValidDateParts(parts: DateParts) {
+  if (parts.month < 1 || parts.month > 12) return false;
+  if (parts.day < 1 || parts.day > 31) return false;
+  if (parts.hour < 0 || parts.hour > 23) return false;
+  if (parts.minute < 0 || parts.minute > 59) return false;
+  if (parts.second < 0 || parts.second > 59) return false;
+  const test = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second));
+  return (
+    test.getUTCFullYear() === parts.year &&
+    test.getUTCMonth() === parts.month - 1 &&
+    test.getUTCDate() === parts.day &&
+    test.getUTCHours() === parts.hour &&
+    test.getUTCMinutes() === parts.minute &&
+    test.getUTCSeconds() === parts.second
+  );
+}
+
+function parseNumberDateInput(input: string): DateParts | null {
+  const normalized = input.trim().replace(/\s+/g, ' ');
+
+  let match = normalized.match(
+    /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[,\sT]+(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?\s*(am|pm)?)?$/i
+  );
+  if (match) {
+    const hourRaw = match[4] ? Number(match[4]) : 0;
+    const hour = normalizeHour(hourRaw, match[7]);
+    const parts: DateParts = {
+      year: Number(match[1]),
+      month: Number(match[2]),
+      day: Number(match[3]),
+      hour,
+      minute: match[5] ? Number(match[5]) : 0,
+      second: match[6] ? Number(match[6]) : 0
+    };
+    return isValidDateParts(parts) ? parts : null;
+  }
+
+  // day-first (common in India): DD/MM/YYYY or DD-MM-YYYY
+  match = normalized.match(
+    /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[,\sT]+(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?\s*(am|pm)?)?$/i
+  );
+  if (match) {
+    const hourRaw = match[4] ? Number(match[4]) : 0;
+    const hour = normalizeHour(hourRaw, match[7]);
+    const parts: DateParts = {
+      year: Number(match[3]),
+      month: Number(match[2]),
+      day: Number(match[1]),
+      hour,
+      minute: match[5] ? Number(match[5]) : 0,
+      second: match[6] ? Number(match[6]) : 0
+    };
+    return isValidDateParts(parts) ? parts : null;
+  }
+
+  return null;
+}
+
+function parseNamedMonthInput(input: string): DateParts | null {
+  const normalized = input.trim().replace(/,/g, ' ').replace(/\s+/g, ' ');
+
+  let match = normalized.match(
+    /^([A-Za-z]{3,9})\s+(\d{1,2})\s+(\d{4})(?:\s+(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?\s*(am|pm)?)?$/i
+  );
+  if (match) {
+    const month = MONTHS[match[1].toLowerCase()];
+    if (!month) return null;
+    const hourRaw = match[4] ? Number(match[4]) : 0;
+    const hour = normalizeHour(hourRaw, match[7]);
+    const parts: DateParts = {
+      year: Number(match[3]),
+      month,
+      day: Number(match[2]),
+      hour,
+      minute: match[5] ? Number(match[5]) : 0,
+      second: match[6] ? Number(match[6]) : 0
+    };
+    return isValidDateParts(parts) ? parts : null;
+  }
+
+  match = normalized.match(
+    /^(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{4})(?:\s+(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?\s*(am|pm)?)?$/i
+  );
+  if (match) {
+    const month = MONTHS[match[2].toLowerCase()];
+    if (!month) return null;
+    const hourRaw = match[4] ? Number(match[4]) : 0;
+    const hour = normalizeHour(hourRaw, match[7]);
+    const parts: DateParts = {
+      year: Number(match[3]),
+      month,
+      day: Number(match[1]),
+      hour,
+      minute: match[5] ? Number(match[5]) : 0,
+      second: match[6] ? Number(match[6]) : 0
+    };
+    return isValidDateParts(parts) ? parts : null;
+  }
+
+  return null;
+}
+
+function parseDateParts(input: string) {
+  return parseNumberDateInput(input) ?? parseNamedMonthInput(input);
+}
+
+export function toIstDateInputValue(timestamp: number) {
+  const shifted = timestamp + IST_OFFSET_MINUTES * 60_000;
+  const iso = new Date(shifted).toISOString().slice(0, 16).replace('T', ' ');
+  return `${iso} IST`;
 }
 
 export function formatMintDate(timestamp: number) {
-  return new Date(timestamp).toLocaleString(undefined, {
+  const value = new Date(timestamp).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
     month: 'short',
     day: 'numeric',
     year: 'numeric',
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    hour12: true
   });
+  return `${value} IST`;
 }
 
 export function formatCountdown(targetMs: number, nowMs: number) {
@@ -37,9 +218,47 @@ export function formatCountdown(targetMs: number, nowMs: number) {
 }
 
 export function parseDateInput(value: string) {
-  const timestamp = new Date(value).getTime();
-  if (Number.isNaN(timestamp)) {
-    throw new Error('Please select a valid mint date.');
+  const raw = value.trim();
+  if (!raw) {
+    throw new Error('Please enter a mint date and time.');
   }
-  return timestamp;
+
+  const explicitOffsetTimestamp = Date.parse(raw);
+  if (/[zZ]$|[+-]\d{2}:\d{2}$|[+-]\d{4}$/.test(raw) && Number.isFinite(explicitOffsetTimestamp)) {
+    return explicitOffsetTimestamp;
+  }
+
+  const tzMatch = raw.match(/\b([A-Za-z]{2,5})$/);
+  if (tzMatch) {
+    const zone = tzMatch[1].toUpperCase();
+    if (zone in TIMEZONE_OFFSETS) {
+      const withoutZone = raw.slice(0, raw.length - tzMatch[0].length).trim();
+      const parts = parseDateParts(withoutZone);
+      if (parts) {
+        return toUtcTimestamp(parts, TIMEZONE_OFFSETS[zone]);
+      }
+
+      const sign = TIMEZONE_OFFSETS[zone] >= 0 ? '+' : '-';
+      const absMinutes = Math.abs(TIMEZONE_OFFSETS[zone]);
+      const tzToken = `${sign}${pad2(Math.floor(absMinutes / 60))}:${pad2(absMinutes % 60)}`;
+      const fallbackTimestamp = Date.parse(`${withoutZone} ${tzToken}`);
+      if (Number.isFinite(fallbackTimestamp)) {
+        return fallbackTimestamp;
+      }
+    }
+  }
+
+  const parts = parseDateParts(raw);
+  if (parts) {
+    return toUtcTimestamp(parts, IST_OFFSET_MINUTES);
+  }
+
+  const fallbackIstTimestamp = Date.parse(`${raw} +05:30`);
+  if (Number.isFinite(fallbackIstTimestamp)) {
+    return fallbackIstTimestamp;
+  }
+
+  throw new Error(
+    'Invalid mint date. Use formats like "2026-03-01 6:00 PM EST", "2026-03-01 23:30 GMT", or "2026-03-02 07:30" (IST).'
+  );
 }

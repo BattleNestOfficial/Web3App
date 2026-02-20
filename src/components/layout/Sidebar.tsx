@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { BarChart3, Bug, Clock3, Gauge, KanbanSquare, Layers, ListTodo, Settings, Sprout, Wallet, X } from 'lucide-react';
+import { BarChart3, Bug, Clock3, Gauge, ListTodo, Settings, Sprout, Wallet, X } from 'lucide-react';
 import { useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '../../lib/cn';
@@ -7,13 +7,11 @@ import { cn } from '../../lib/cn';
 const items = [
   { label: 'Overview', to: '/dashboard', icon: Gauge },
   { label: 'Analytics', to: '/analytics', icon: BarChart3 },
-  { label: 'Mint Tracker', to: '/mints', icon: Clock3 },
+  { label: 'NFT Mint Tracker', to: '/nft-mints', icon: Clock3 },
   { label: 'Projects / Testnets', to: '/farming', icon: Sprout },
-  { label: 'Productivity', to: '/productivity', icon: KanbanSquare },
   { label: 'To-Do', to: '/todo', icon: ListTodo },
   { label: 'Wallet Tracker', to: '/wallet-tracker', icon: Wallet },
   { label: 'Bug Tracker', to: '/bugs', icon: Bug },
-  { label: 'Projects', to: '/projects', icon: Layers },
   { label: 'Settings', to: '/settings', icon: Settings }
 ];
 

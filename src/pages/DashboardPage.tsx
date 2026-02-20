@@ -1,3 +1,4 @@
+import { useLiveQuery } from 'dexie-react-hooks';
 import { motion } from 'framer-motion';
 import {
   AlertTriangle,
@@ -8,8 +9,6 @@ import {
   ExternalLink,
   ListTodo,
   RefreshCw,
-  Sparkles,
-  TrendingUp,
   Wand2
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -25,14 +24,13 @@ import {
   type MintExtractionResult,
   type TweetSummaryResult
 } from '../features/ai/api';
+import {
+  fetchUpcomingMarketplaceMints,
+  type MarketplaceMintCalendarMeta,
+  type MarketplaceMintItem
+} from '../features/marketplaceMints/api';
+import { todoDB, type TodoTaskRecord } from '../features/todo/db';
 import { Button } from '../components/ui/Button';
-
-const taskItems = [
-  { label: 'Review mint allowlist', done: true },
-  { label: 'Post launch countdown update', done: true },
-  { label: 'Finalize collection metadata', done: false },
-  { label: 'Publish teaser on social', done: false }
-];
 
 const timelineItems = [
   { time: '09:15', title: 'Whitelist snapshot generated', detail: '2,304 wallets synced' },
@@ -41,7 +39,6 @@ const timelineItems = [
   { time: '14:05', title: 'Treasury alert review', detail: 'No anomalies detected' }
 ];
 
-const chartBars = [28, 40, 35, 48, 57, 52, 68, 62, 74, 71, 79, 84];
 const defaultKeywords = ['mint', 'testnet', 'airdrop'];
 
 const container = {
@@ -106,6 +103,13 @@ export function DashboardPage() {
   const [isAiGeneratingTasks, setIsAiGeneratingTasks] = useState(false);
   const [isAiLoadingDailySummary, setIsAiLoadingDailySummary] = useState(false);
   const [extractingTweetId, setExtractingTweetId] = useState<string | null>(null);
+  const [calendarItems, setCalendarItems] = useState<MarketplaceMintItem[]>([]);
+  const [calendarMeta, setCalendarMeta] = useState<MarketplaceMintCalendarMeta | null>(null);
+  const [isCalendarLoading, setIsCalendarLoading] = useState(true);
+  const [isCalendarRefreshing, setIsCalendarRefreshing] = useState(false);
+  const [calendarError, setCalendarError] = useState('');
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  const todoTasks = useLiveQuery(async () => todoDB.tasks.toArray(), []);
 
   const accountFilterKey = useMemo(() => selectedAccounts.join('|'), [selectedAccounts]);
   const keywordFilterKey = useMemo(() => selectedKeywords.join('|'), [selectedKeywords]);
@@ -168,6 +172,42 @@ export function DashboardPage() {
     }
 
     void loadDailySummary();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowTick(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadMintCalendar() {
+      setIsCalendarLoading(true);
+      setCalendarError('');
+
+      try {
+        const response = await fetchUpcomingMarketplaceMints({ days: 45, limit: 24 });
+        if (!isMounted) return;
+        setCalendarItems(response.data);
+        setCalendarMeta(response.meta);
+      } catch (error) {
+        if (!isMounted) return;
+        setCalendarError(error instanceof Error ? error.message : 'Failed to load marketplace mint calendar.');
+      } finally {
+        if (isMounted) {
+          setIsCalendarLoading(false);
+        }
+      }
+    }
+
+    void loadMintCalendar();
     return () => {
       isMounted = false;
     };
@@ -263,6 +303,20 @@ export function DashboardPage() {
     }
   }
 
+  async function refreshMintCalendar() {
+    setIsCalendarRefreshing(true);
+    setCalendarError('');
+    try {
+      const response = await fetchUpcomingMarketplaceMints({ days: 45, limit: 24 });
+      setCalendarItems(response.data);
+      setCalendarMeta(response.meta);
+    } catch (error) {
+      setCalendarError(error instanceof Error ? error.message : 'Failed to refresh mint calendar.');
+    } finally {
+      setIsCalendarRefreshing(false);
+    }
+  }
+
   function toggleKeyword(keyword: string) {
     setSelectedKeywords((prev) => {
       const normalized = keyword.toLowerCase();
@@ -285,6 +339,31 @@ export function DashboardPage() {
 
   const configuredAccounts = alphaMeta?.configuredAccounts ?? [];
   const configuredKeywords = alphaMeta?.configuredKeywords?.length ? alphaMeta.configuredKeywords : defaultKeywords;
+  const nextMarketplaceMint = calendarItems[0] ?? null;
+  const tasksToday = useMemo(() => {
+    const tasks = [...(todoTasks ?? [])];
+    if (tasks.length === 0) return [];
+
+    const now = new Date(nowTick);
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const dayEnd = dayStart + 24 * 60 * 60 * 1000 - 1;
+
+    const sortTasks = (rows: TodoTaskRecord[]) =>
+      rows.sort((a, b) => {
+        if (a.done !== b.done) return Number(a.done) - Number(b.done);
+        const dueA = a.dueAt ?? Number.MAX_SAFE_INTEGER;
+        const dueB = b.dueAt ?? Number.MAX_SAFE_INTEGER;
+        if (dueA !== dueB) return dueA - dueB;
+        return b.updatedAt - a.updatedAt;
+      });
+
+    const dueToday = sortTasks(tasks.filter((task) => task.dueAt !== null && task.dueAt >= dayStart && task.dueAt <= dayEnd));
+    if (dueToday.length > 0) {
+      return dueToday.slice(0, 6);
+    }
+
+    return sortTasks(tasks).slice(0, 6);
+  }, [todoTasks, nowTick]);
 
   return (
     <section className="mx-auto max-w-7xl">
@@ -299,62 +378,69 @@ export function DashboardPage() {
       </motion.header>
 
       <motion.div variants={container} initial="hidden" animate="show" className="grid gap-4 lg:grid-cols-12">
-        <GlassCard title="Welcome Card" icon={<Sparkles className="h-4 w-4" />} className="lg:col-span-7">
-          <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-cyan-400/15 to-blue-500/10 p-5 sm:p-6">
-            <div className="pointer-events-none absolute -right-14 -top-14 h-40 w-40 rounded-full bg-cyan-300/20 blur-3xl" />
-            <p className="text-sm text-slate-200">Your launch runway looks healthy. Pre-mint engagement is trending up.</p>
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <span className="rounded-full border border-cyan-300/35 bg-cyan-300/10 px-3 py-1 text-xs text-cyan-200">
-                7 days until public mint
-              </span>
-              <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-slate-200">
-                83% checklist complete
-              </span>
-            </div>
-          </div>
-        </GlassCard>
-
         <GlassCard
           title="Upcoming Mint"
           icon={<CalendarClock className="h-4 w-4" />}
           className="lg:col-span-5"
         >
-          <p className="text-sm text-slate-300">Phase 1 public mint opens on Friday, 20:00 UTC.</p>
-          <div className="mt-4 grid grid-cols-4 gap-2">
-            {[
-              ['03', 'Days'],
-              ['14', 'Hours'],
-              ['09', 'Mins'],
-              ['42', 'Secs']
-            ].map(([value, label]) => (
-              <div key={label} className="rounded-xl border border-white/10 bg-white/[0.03] px-2 py-3 text-center">
-                <p className="font-display text-lg text-white">{value}</p>
-                <p className="text-[10px] uppercase tracking-wide text-slate-400">{label}</p>
+          {nextMarketplaceMint ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                    nextMarketplaceMint.source === 'magiceden'
+                      ? 'border-cyan-300/35 bg-cyan-300/10 text-cyan-200'
+                      : 'border-emerald-300/35 bg-emerald-300/10 text-emerald-200'
+                  }`}
+                >
+                  {nextMarketplaceMint.sourceLabel}
+                </span>
+                <p className="text-sm text-slate-200">{nextMarketplaceMint.name}</p>
               </div>
-            ))}
-          </div>
+              <p className="mt-2 text-sm text-slate-300">
+                Starts {new Date(nextMarketplaceMint.startsAt).toLocaleString()} ({nextMarketplaceMint.chain})
+              </p>
+              <p className="mt-2 text-xs text-glow">{formatTimeUntil(nextMarketplaceMint.startsAt, nowTick)}</p>
+              <div className="mt-4 grid grid-cols-4 gap-2">
+                {formatCountdownParts(nextMarketplaceMint.startsAt, nowTick).map(([value, label]) => (
+                  <div key={label} className="rounded-xl border border-white/10 bg-white/[0.03] px-2 py-3 text-center">
+                    <p className="font-display text-lg text-white">{value}</p>
+                    <p className="text-[10px] uppercase tracking-wide text-slate-400">{label}</p>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-slate-300">No upcoming mint data available yet.</p>
+          )}
         </GlassCard>
 
         <GlassCard title="Tasks Today" icon={<CheckCircle2 className="h-4 w-4" />} className="lg:col-span-4">
-          <ul className="space-y-2">
-            {taskItems.map((task) => (
-              <li
-                key={task.label}
-                className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2"
-              >
-                <span className="text-sm text-slate-200">{task.label}</span>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${
-                    task.done
-                      ? 'border border-emerald-300/40 bg-emerald-300/10 text-emerald-200'
-                      : 'border border-amber-300/40 bg-amber-300/10 text-amber-200'
-                  }`}
-                >
-                  {task.done ? 'Done' : 'Pending'}
-                </span>
-              </li>
-            ))}
-          </ul>
+          {tasksToday.length === 0 ? (
+            <p className="text-sm text-slate-300">No to-do tasks yet. Add tasks in the To-Do module.</p>
+          ) : (
+            <ul className="space-y-2">
+              {tasksToday.map((task) => {
+                const overdue = !task.done && task.dueAt !== null && task.dueAt < nowTick;
+                const badge = task.done
+                  ? 'border border-emerald-300/40 bg-emerald-300/10 text-emerald-200'
+                  : overdue
+                    ? 'border border-rose-300/40 bg-rose-300/10 text-rose-200'
+                    : 'border border-amber-300/40 bg-amber-300/10 text-amber-200';
+                const label = task.done ? 'Done' : overdue ? 'Overdue' : 'Pending';
+
+                return (
+                  <li
+                    key={task.id ?? `${task.title}-${task.updatedAt}`}
+                    className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2"
+                  >
+                    <span className={`text-sm ${task.done ? 'text-slate-400 line-through' : 'text-slate-200'}`}>{task.title}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${badge}`}>{label}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </GlassCard>
 
         <GlassCard title="Activity Timeline" icon={<Clock3 className="h-4 w-4" />} className="lg:col-span-4">
@@ -373,30 +459,110 @@ export function DashboardPage() {
           </div>
         </GlassCard>
 
-        <GlassCard
-          title="Analytics (Placeholder)"
-          icon={<TrendingUp className="h-4 w-4" />}
-          className="lg:col-span-8"
-        >
-          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <p className="text-sm text-slate-300">Engagement trend</p>
+        <GlassCard title="NFT Mint Calendar" icon={<CalendarClock className="h-4 w-4" />} className="lg:col-span-8">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full border border-cyan-300/35 bg-cyan-300/10 px-2 py-0.5 text-xs text-cyan-200">
-                +22.4%
+                Magic Eden: {calendarMeta?.providers.magiceden.count ?? 0}
+              </span>
+              <span className="rounded-full border border-emerald-300/35 bg-emerald-300/10 px-2 py-0.5 text-xs text-emerald-200">
+                OpenSea: {calendarMeta?.providers.opensea.count ?? 0}
               </span>
             </div>
-            <div className="flex h-52 items-end gap-2">
-              {chartBars.map((height, index) => (
-                <motion.div
-                  key={index}
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: `${height}%`, opacity: 1 }}
-                  transition={{ delay: 0.25 + index * 0.03, duration: 0.45 }}
-                  className="flex-1 rounded-t-lg bg-gradient-to-t from-cyan-400/30 to-blue-400/70"
-                />
+            <Button
+              type="button"
+              variant="ghost"
+              className="px-3"
+              onClick={() => void refreshMintCalendar()}
+              disabled={isCalendarRefreshing}
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${isCalendarRefreshing ? 'animate-spin' : ''}`} />
+              {isCalendarRefreshing ? 'Refreshing...' : 'Refresh'}
+            </Button>
+          </div>
+
+          {calendarMeta ? (
+            <p className="mb-3 text-xs text-slate-400">
+              Window: next {calendarMeta.days} days | Last fetched {new Date(calendarMeta.fetchedAt).toLocaleString()}
+            </p>
+          ) : null}
+
+          {calendarError ? (
+            <div className="mb-3 rounded-xl border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm text-rose-200">
+              {calendarError}
+            </div>
+          ) : null}
+
+          {isCalendarLoading ? (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-5 text-sm text-slate-300">
+              Loading upcoming mints from OpenSea and Magic Eden...
+            </div>
+          ) : calendarItems.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-700/80 bg-panel/60 px-3 py-5 text-sm text-slate-300">
+              No upcoming marketplace mints found in the selected time window.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {calendarItems.slice(0, 12).map((mint, index) => (
+                <motion.article
+                  key={mint.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.18, delay: index * 0.02 }}
+                  className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3"
+                >
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                          mint.source === 'magiceden'
+                            ? 'border-cyan-300/35 bg-cyan-300/10 text-cyan-200'
+                            : 'border-emerald-300/35 bg-emerald-300/10 text-emerald-200'
+                        }`}
+                      >
+                        {mint.sourceLabel}
+                      </span>
+                      <p className="truncate text-sm text-white">{mint.name}</p>
+                    </div>
+                    <p className="text-xs text-slate-400">{new Date(mint.startsAt).toLocaleString()}</p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                    <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5 uppercase tracking-wide">
+                      {mint.chain}
+                    </span>
+                    {mint.stageLabel ? (
+                      <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5 uppercase tracking-wide">
+                        {mint.stageLabel}
+                      </span>
+                    ) : null}
+                    {mint.price !== null ? (
+                      <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5">
+                        {mint.price} {mint.currency ?? ''}
+                      </span>
+                    ) : null}
+                    {mint.supply !== null ? (
+                      <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5">
+                        Supply {mint.supply}
+                      </span>
+                    ) : null}
+                    <span className="text-glow">{formatTimeUntil(mint.startsAt, nowTick)}</span>
+                    {mint.url ? (
+                      <a
+                        href={mint.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="ml-auto inline-flex items-center rounded-lg border border-slate-600 bg-panelAlt px-2.5 py-1 text-xs text-slate-100 transition hover:border-slate-500"
+                      >
+                        Open
+                        <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                      </a>
+                    ) : null}
+                  </div>
+                </motion.article>
               ))}
             </div>
-          </div>
+          )}
         </GlassCard>
 
         <GlassCard title="AI Daily Productivity Summary" icon={<Brain className="h-4 w-4" />} className="lg:col-span-4">
@@ -654,4 +820,47 @@ export function DashboardPage() {
       </motion.div>
     </section>
   );
+}
+
+function formatTimeUntil(isoString: string, nowMs: number) {
+  const targetMs = new Date(isoString).getTime();
+  if (!Number.isFinite(targetMs)) return 'Unknown time';
+
+  const diffMs = targetMs - nowMs;
+  if (diffMs <= 0) return 'Live or started';
+
+  const totalMinutes = Math.floor(diffMs / (60 * 1000));
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+
+  if (days > 0) return `Starts in ${days}d ${hours}h`;
+  if (hours > 0) return `Starts in ${hours}h ${minutes}m`;
+  return `Starts in ${minutes}m`;
+}
+
+function formatCountdownParts(isoString: string, nowMs: number) {
+  const targetMs = new Date(isoString).getTime();
+  if (!Number.isFinite(targetMs)) {
+    return [
+      ['00', 'Days'],
+      ['00', 'Hours'],
+      ['00', 'Mins'],
+      ['00', 'Secs']
+    ] as const;
+  }
+
+  const diffMs = Math.max(0, targetMs - nowMs);
+  const totalSeconds = Math.floor(diffMs / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  return [
+    [String(days).padStart(2, '0'), 'Days'],
+    [String(hours).padStart(2, '0'), 'Hours'],
+    [String(minutes).padStart(2, '0'), 'Mins'],
+    [String(seconds).padStart(2, '0'), 'Secs']
+  ] as const;
 }

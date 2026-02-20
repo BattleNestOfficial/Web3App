@@ -30,13 +30,18 @@ function parseLimit(value, fallback = 50) {
 function validatePayload(body) {
   const walletAddress = typeof body?.walletAddress === 'string' ? body.walletAddress.trim() : '';
   const walletLabel = typeof body?.walletLabel === 'string' ? body.walletLabel.trim() : '';
+  const platformRaw = typeof body?.platform === 'string' ? body.platform.trim().toLowerCase() : '';
 
   if (!walletAddress) {
     throw new ApiError(400, 'Field "walletAddress" is required.');
   }
+  if (platformRaw && !['opensea', 'magiceden'].includes(platformRaw)) {
+    throw new ApiError(400, 'Field "platform" must be one of: opensea, magiceden.');
+  }
 
   return {
     walletAddress,
+    platform: platformRaw || undefined,
     walletLabel,
     enabled: body?.enabled,
     notifyBuy: body?.notifyBuy,

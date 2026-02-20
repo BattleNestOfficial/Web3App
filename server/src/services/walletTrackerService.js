@@ -3,10 +3,20 @@ import { env } from '../config/env.js';
 import { triggerAutomationNotification } from './notificationService.js';
 
 const SUPPORTED_EVENT_TYPES = ['buy', 'sell', 'mint', 'transfer'];
+const SUPPORTED_WALLET_TRACKER_PLATFORMS = ['opensea', 'magiceden'];
+const MAGICEDEN_ACTIVITY_TYPES = ['TRADE', 'MINT', 'TRANSFER'];
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 function normalizeWalletAddress(input) {
   return String(input ?? '').trim().toLowerCase();
+}
+
+function normalizePlatform(value, fallback = env.walletTracker.provider) {
+  const normalized = String(value ?? fallback ?? 'opensea').trim().toLowerCase();
+  if (!SUPPORTED_WALLET_TRACKER_PLATFORMS.includes(normalized)) {
+    throw new Error(`Unsupported wallet tracker provider: ${normalized}`);
+  }
+  return normalized;
 }
 
 function normalizeBoolean(value, fallback = false) {
@@ -69,7 +79,7 @@ function extractRawEvents(payload) {
   return [];
 }
 
-function parseWalletEvent(rawEvent, walletAddress) {
+function parseOpenSeaWalletEvent(rawEvent, walletAddress) {
   if (!rawEvent || typeof rawEvent !== 'object') return null;
 
   const nft = rawEvent.nft ?? rawEvent.asset ?? rawEvent.item ?? null;
@@ -214,7 +224,7 @@ async function fetchOpenSeaEvents(walletAddress) {
       const payload = await response.json();
       const rawEvents = extractRawEvents(payload);
       return rawEvents
-        .map((event) => parseWalletEvent(event, walletAddress))
+        .map((event) => parseOpenSeaWalletEvent(event, walletAddress))
         .filter((event) => event && SUPPORTED_EVENT_TYPES.includes(event.eventType));
     }
 
@@ -230,7 +240,131 @@ async function fetchOpenSeaEvents(walletAddress) {
   }
 }
 
-async function insertWalletEvent(client, tracker, event) {
+function parseMagicEdenWalletEvent(rawEvent, walletAddress) {
+  if (!rawEvent || typeof rawEvent !== 'object') return null;
+
+  const activityType = compactString(rawEvent.activityType);
+  const fromWallet = normalizeWalletAddress(rawEvent.fromAddress);
+  const toWallet = normalizeWalletAddress(rawEvent.toAddress);
+  const wallet = normalizeWalletAddress(walletAddress);
+
+  let eventType = null;
+  if (activityType === 'TRADE') {
+    if (fromWallet && fromWallet === wallet) eventType = 'sell';
+    else if (toWallet && toWallet === wallet) eventType = 'buy';
+    else eventType = 'transfer';
+  } else if (activityType === 'MINT') {
+    eventType = 'mint';
+  } else if (activityType === 'TRANSFER') {
+    if (fromWallet === ZERO_ADDRESS && toWallet === wallet) eventType = 'mint';
+    else eventType = 'transfer';
+  }
+
+  if (!eventType) return null;
+
+  const eventAt = toIsoString(rawEvent.timestamp);
+  if (!eventAt) return null;
+
+  const asset = rawEvent.asset ?? {};
+  const assetId = compactString(asset.id);
+  const assetIdParts = assetId ? assetId.split(':') : [];
+  const tokenContract = compactString(asset.contractAddress) ?? compactString(assetIdParts[0]);
+  const tokenId = compactString(asset.tokenId) ?? compactString(assetIdParts[1]);
+  const collectionSlug = compactString(rawEvent.collection?.id) ?? compactString(asset.collectionId);
+  const txHash = compactString(rawEvent.transactionInfo?.transactionId) ?? compactString(rawEvent.txHash);
+  const currencySymbol = compactString(rawEvent.unitPrice?.currency?.symbol);
+  const priceValue =
+    compactString(rawEvent.unitPrice?.amount?.native) ?? compactString(rawEvent.unitPrice?.amount?.raw);
+
+  const eventId =
+    compactString(rawEvent.activityId) ??
+    [txHash, tokenContract, tokenId, eventType, eventAt].map((part) => compactString(part)).filter(Boolean).join(':');
+  if (!eventId) return null;
+
+  return {
+    eventId,
+    eventType,
+    txHash,
+    tokenContract,
+    tokenId,
+    collectionSlug,
+    currencySymbol,
+    priceValue,
+    fromWallet,
+    toWallet,
+    eventAt,
+    rawEvent
+  };
+}
+
+async function fetchMagicEdenEvents(walletAddress) {
+  const baseUrl = env.walletTracker.magiceden.apiBaseUrl.replace(/\/+$/, '');
+  const limit = Math.max(1, Math.min(100, Number(env.walletTracker.maxEventsPerWallet) || 50));
+  const chain = String(env.walletTracker.magiceden.evmChain || 'ethereum')
+    .trim()
+    .toLowerCase();
+  const apiKey = env.walletTracker.magiceden.apiKey;
+
+  const query = new URLSearchParams();
+  query.set('chain', chain);
+  query.set('walletAddress', walletAddress);
+  query.set('limit', String(limit));
+  for (const activityType of MAGICEDEN_ACTIVITY_TYPES) {
+    query.append('activityTypes[]', activityType);
+  }
+
+  const endpoint = `${baseUrl}/v4/evm-public/activities?${query.toString()}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), env.walletTracker.requestTimeoutMs);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+      },
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      let reason = `HTTP ${response.status}`;
+      try {
+        const bodyText = await response.text();
+        if (bodyText) {
+          reason = `${reason} - ${bodyText.slice(0, 240)}`;
+        }
+      } catch {
+        // Ignore body read failures.
+      }
+      const keyHint = apiKey
+        ? ''
+        : ' MAGICEDEN_API_KEY is missing; free tier is limited and may be throttled.';
+      throw new Error(`Magic Eden wallet activities request failed.${keyHint} ${endpoint} => ${reason}`);
+    }
+
+    const payload = await response.json();
+    const rawEvents = Array.isArray(payload?.activities) ? payload.activities : [];
+    return rawEvents
+      .map((event) => parseMagicEdenWalletEvent(event, walletAddress))
+      .filter((event) => event && SUPPORTED_EVENT_TYPES.includes(event.eventType));
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchWalletEvents(tracker) {
+  const platform = normalizePlatform(tracker?.platform);
+  if (platform === 'opensea') {
+    return fetchOpenSeaEvents(tracker.wallet_address);
+  }
+  if (platform === 'magiceden') {
+    return fetchMagicEdenEvents(tracker.wallet_address);
+  }
+  throw new Error(`Unsupported wallet tracker platform: ${platform}`);
+}
+
+async function insertWalletEvent(client, tracker, event, marketplace) {
   const result = await client.query(
     `INSERT INTO wallet_activity_events (
        tracker_id,
@@ -248,7 +382,7 @@ async function insertWalletEvent(client, tracker, event) {
        marketplace,
        payload
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'opensea', $13::jsonb)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
      ON CONFLICT (tracker_id, event_id)
      DO NOTHING
      RETURNING id`,
@@ -265,6 +399,7 @@ async function insertWalletEvent(client, tracker, event) {
       event.fromWallet || null,
       event.toWallet || null,
       event.eventAt,
+      marketplace,
       JSON.stringify(event.rawEvent)
     ]
   );
@@ -290,6 +425,7 @@ async function sendWalletActivityNotification(tracker, event) {
     metadata: {
       trackerId: tracker.id,
       walletAddress: tracker.wallet_address,
+      marketplace: event.marketplace ?? tracker.platform,
       eventType: event.eventType,
       tokenContract: event.tokenContract,
       tokenId: event.tokenId,
@@ -302,6 +438,7 @@ async function sendWalletActivityNotification(tracker, event) {
 
 function normalizeTrackerInput(input, existing = null) {
   const walletAddress = normalizeWalletAddress(input.walletAddress ?? existing?.wallet_address ?? '');
+  const platform = normalizePlatform(input.platform ?? existing?.platform ?? env.walletTracker.provider);
   const walletLabel = String(input.walletLabel ?? existing?.wallet_label ?? '').trim();
   const enabled = normalizeBoolean(input.enabled, existing ? existing.enabled : true);
   const notifyBuy = normalizeBoolean(input.notifyBuy, existing ? existing.notify_buy : true);
@@ -310,6 +447,7 @@ function normalizeTrackerInput(input, existing = null) {
 
   return {
     walletAddress,
+    platform,
     walletLabel,
     enabled,
     notifyBuy,
@@ -363,7 +501,7 @@ export async function createWalletTracker(input) {
 
   const result = await pool.query(
     `INSERT INTO wallet_trackers (wallet_address, wallet_label, platform, notify_buy, notify_sell, notify_mint, enabled)
-     VALUES ($1, $2, 'opensea', $3, $4, $5, $6)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (wallet_address, platform)
      DO UPDATE SET
        wallet_label = EXCLUDED.wallet_label,
@@ -376,6 +514,7 @@ export async function createWalletTracker(input) {
     [
       normalized.walletAddress,
       normalized.walletLabel || null,
+      normalized.platform,
       normalized.notifyBuy,
       normalized.notifySell,
       normalized.notifyMint,
@@ -398,10 +537,11 @@ export async function updateWalletTracker(id, input) {
     `UPDATE wallet_trackers
      SET wallet_address = $2,
          wallet_label = $3,
-         notify_buy = $4,
-         notify_sell = $5,
-         notify_mint = $6,
-         enabled = $7,
+         platform = $4,
+         notify_buy = $5,
+         notify_sell = $6,
+         notify_mint = $7,
+         enabled = $8,
          updated_at = NOW()
      WHERE id = $1
      RETURNING id, wallet_address, wallet_label, platform, notify_buy, notify_sell, notify_mint, enabled, last_checked_at, last_event_at, created_at, updated_at`,
@@ -409,6 +549,7 @@ export async function updateWalletTracker(id, input) {
       id,
       normalized.walletAddress,
       normalized.walletLabel || null,
+      normalized.platform,
       normalized.notifyBuy,
       normalized.notifySell,
       normalized.notifyMint,
@@ -465,6 +606,7 @@ export async function listWalletTrackerEvents({ trackerId = null, limit = 50 }) 
 }
 
 export async function syncWalletTracker(tracker) {
+  const platform = normalizePlatform(tracker?.platform ?? env.walletTracker.provider);
   if (!tracker?.enabled) {
     await pool.query('UPDATE wallet_trackers SET last_checked_at = NOW(), updated_at = NOW() WHERE id = $1', [
       tracker.id
@@ -478,7 +620,7 @@ export async function syncWalletTracker(tracker) {
     };
   }
 
-  const events = await fetchOpenSeaEvents(tracker.wallet_address);
+  const events = await fetchWalletEvents({ ...tracker, platform });
   const sinceDate = tracker.last_event_at
     ? toDate(tracker.last_event_at)
     : new Date(Date.now() - env.walletTracker.lookbackMinutes * 60 * 1000);
@@ -499,7 +641,7 @@ export async function syncWalletTracker(tracker) {
     await client.query('BEGIN');
 
     for (const event of filteredEvents) {
-      const created = await insertWalletEvent(client, tracker, event);
+      const created = await insertWalletEvent(client, tracker, event, platform);
       if (created) inserted += 1;
     }
 
@@ -523,7 +665,7 @@ export async function syncWalletTracker(tracker) {
 
   if (inserted > 0) {
     const latestInsertedEvents = await pool.query(
-      `SELECT event_id, event_type, token_contract, token_id, collection_slug, currency_symbol, price_value, tx_hash, event_at
+      `SELECT event_id, event_type, token_contract, token_id, collection_slug, currency_symbol, price_value, tx_hash, event_at, marketplace
        FROM wallet_activity_events
        WHERE tracker_id = $1
        ORDER BY created_at DESC
@@ -545,7 +687,8 @@ export async function syncWalletTracker(tracker) {
           currencySymbol: event.currency_symbol,
           priceValue: event.price_value,
           txHash: event.tx_hash,
-          eventAt: event.event_at
+          eventAt: event.event_at,
+          marketplace: event.marketplace
         });
         notified += 1;
       } catch {

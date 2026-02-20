@@ -42,6 +42,7 @@ export type WalletActivityEvent = {
 
 export type WalletTrackerPayload = {
   walletAddress: string;
+  platform?: 'opensea' | 'magiceden';
   walletLabel?: string;
   enabled?: boolean;
   notifyBuy?: boolean;

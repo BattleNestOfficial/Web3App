@@ -15,6 +15,7 @@ import {
 
 type FormState = {
   walletAddress: string;
+  platform: 'opensea' | 'magiceden';
   walletLabel: string;
   notifyBuy: boolean;
   notifySell: boolean;
@@ -23,6 +24,7 @@ type FormState = {
 
 const defaultForm: FormState = {
   walletAddress: '',
+  platform: 'opensea',
   walletLabel: '',
   notifyBuy: true,
   notifySell: true,
@@ -88,6 +90,7 @@ export function WalletTrackerPage() {
     try {
       await createWalletTracker({
         walletAddress: form.walletAddress.trim(),
+        platform: form.platform,
         walletLabel: form.walletLabel.trim(),
         notifyBuy: form.notifyBuy,
         notifySell: form.notifySell,
@@ -161,6 +164,19 @@ export function WalletTrackerPage() {
               onChange={(event) => setForm((prev) => ({ ...prev, walletAddress: event.target.value }))}
               required
             />
+            <label className="block">
+              <span className="mb-1 block text-xs uppercase tracking-[0.12em] text-slate-400">Provider</span>
+              <select
+                value={form.platform}
+                onChange={(event) =>
+                  setForm((prev) => ({ ...prev, platform: event.target.value as FormState['platform'] }))
+                }
+                className="w-full rounded-xl border border-slate-700 bg-panel px-3 py-2.5 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-red-400/60 focus:ring-1 focus:ring-red-400/40"
+              >
+                <option value="opensea">OpenSea</option>
+                <option value="magiceden">Magic Eden</option>
+              </select>
+            </label>
             <Input
               placeholder="Label (optional)"
               value={form.walletLabel}
@@ -244,6 +260,7 @@ export function WalletTrackerPage() {
                         </p>
                         <p className="truncate text-xs text-slate-400">{tracker.wallet_address}</p>
                         <p className="mt-1 text-xs text-slate-400">
+                          {tracker.platform} |{' '}
                           {tracker.event_count ?? 0} event(s) | last check{' '}
                           {tracker.last_checked_at ? new Date(tracker.last_checked_at).toLocaleString() : 'never'}
                         </p>

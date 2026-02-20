@@ -18,7 +18,7 @@ import {
 } from '../features/mints/db';
 import { syncNotificationEnginePlaceholder } from '../features/mints/notificationEngine';
 import { syncMintsWithBackend } from '../features/mints/sync';
-import { formatCountdown, formatMintDate, parseDateInput, toDateTimeLocalValue } from '../features/mints/time';
+import { formatCountdown, formatMintDate, parseDateInput, toIstDateInputValue } from '../features/mints/time';
 import { useNow } from '../features/mints/useNow';
 
 type FormState = {
@@ -201,7 +201,7 @@ export function MintTrackerPage() {
     setForm({
       name: mint.name,
       chain: mint.chain,
-      mintDate: toDateTimeLocalValue(mint.mintAt),
+      mintDate: toIstDateInputValue(mint.mintAt),
       visibility: mint.visibility,
       link: mint.link,
       notes: mint.notes,
@@ -223,8 +223,8 @@ export function MintTrackerPage() {
   return (
     <section className="mx-auto max-w-7xl">
       <header className="mb-6">
-        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Mints</p>
-        <h2 className="mt-1 font-display text-2xl text-white sm:text-3xl">Mint Tracker</h2>
+        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">NFT Mints</p>
+        <h2 className="mt-1 font-display text-2xl text-white sm:text-3xl">NFT Mint Tracker</h2>
       </header>
 
       <div className="grid gap-4 lg:grid-cols-[1.05fr_1.6fr]">
@@ -254,11 +254,15 @@ export function MintTrackerPage() {
               required
             />
             <Input
-              type="datetime-local"
+              type="text"
+              placeholder="Mint date/time (ex: 2026-03-01 6:00 PM EST or 2026-03-01 23:30 GMT)"
               value={form.mintDate}
               onChange={(event) => setForm((prev) => ({ ...prev, mintDate: event.target.value }))}
               required
             />
+            <p className="text-xs text-slate-400">
+              Time is shown in IST. If no timezone is provided, input is treated as IST.
+            </p>
 
             <div className="grid grid-cols-2 gap-2 rounded-xl border border-slate-700 bg-panelAlt p-1">
               <button

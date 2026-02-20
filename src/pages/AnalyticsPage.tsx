@@ -1,11 +1,12 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { motion } from 'framer-motion';
 import { BarChart3, CheckCircle2, Clock3, Droplets, TrendingUp } from 'lucide-react';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import { fetchNftPortfolioAnalytics, type PortfolioAnalytics } from '../features/analytics/api';
 import { farmingDB } from '../features/farming/db';
 import { mintDB } from '../features/mints/db';
-import { productivityDB } from '../features/productivity/db';
+import { todoDB } from '../features/todo/db';
 
 type ChartPoint = {
   key: string;
@@ -86,15 +87,44 @@ export function AnalyticsPage() {
     async () => (await mintDB.mints.toArray()).filter((mint) => mint.deletedAt === null),
     []
   );
-  const taskRows = useLiveQuery(async () => productivityDB.tasks.toArray(), []);
+  const taskRows = useLiveQuery(async () => todoDB.tasks.toArray(), []);
   const farmingRows = useLiveQuery(
     async () => (await farmingDB.projects.toArray()).filter((project) => project.deletedAt === null),
     []
   );
+  const [portfolio, setPortfolio] = useState<PortfolioAnalytics | null>(null);
+  const [isPortfolioLoading, setIsPortfolioLoading] = useState(true);
+  const [portfolioError, setPortfolioError] = useState('');
 
   const mints = useMemo(() => mintRows ?? [], [mintRows]);
   const tasks = useMemo(() => taskRows ?? [], [taskRows]);
   const projects = useMemo(() => farmingRows ?? [], [farmingRows]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadPortfolio() {
+      setIsPortfolioLoading(true);
+      setPortfolioError('');
+      try {
+        const response = await fetchNftPortfolioAnalytics({ holdingsLimit: 40 });
+        if (!isMounted) return;
+        setPortfolio(response);
+      } catch (error) {
+        if (!isMounted) return;
+        setPortfolioError(error instanceof Error ? error.message : 'Failed to load NFT portfolio analytics.');
+      } finally {
+        if (isMounted) {
+          setIsPortfolioLoading(false);
+        }
+      }
+    }
+
+    void loadPortfolio();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const mintStats = useMemo(() => {
     const total = mints.length;
@@ -152,14 +182,14 @@ export function AnalyticsPage() {
 
   const taskStats = useMemo(() => {
     const total = tasks.length;
-    const done = tasks.filter((task) => task.status === 'done').length;
-    const inProgress = tasks.filter((task) => task.status === 'in_progress').length;
-    const todo = tasks.filter((task) => task.status === 'todo').length;
+    const done = tasks.filter((task) => task.done).length;
+    const overdue = tasks.filter((task) => !task.done && task.dueAt !== null && task.dueAt < nowMs).length;
+    const active = total - done;
     const completionRate = total > 0 ? Math.round((done / total) * 100) : 0;
 
     const statusRows = [
-      { key: 'todo', label: 'To Do', value: todo },
-      { key: 'in_progress', label: 'In Progress', value: inProgress },
+      { key: 'active', label: 'Active', value: active },
+      { key: 'overdue', label: 'Overdue', value: overdue },
       { key: 'done', label: 'Done', value: done }
     ];
 
@@ -175,7 +205,7 @@ export function AnalyticsPage() {
     }
 
     for (const task of tasks) {
-      if (task.status !== 'done') continue;
+      if (!task.done) continue;
       const key = dayKey(task.updatedAt);
       if (!completionMap.has(key)) continue;
       completionMap.set(key, (completionMap.get(key) ?? 0) + 1);
@@ -195,6 +225,8 @@ export function AnalyticsPage() {
     return {
       total,
       done,
+      active,
+      overdue,
       completionRate,
       statusBreakdown,
       completionTrend
@@ -350,6 +382,94 @@ export function AnalyticsPage() {
           </div>
         </GlassCard>
 
+        <GlassCard title="NFT Portfolio Profit / Loss" icon={<Clock3 className="h-4 w-4" />} className="lg:col-span-12">
+          {isPortfolioLoading ? (
+            <p className="text-sm text-slate-300">Loading wallet holdings and live NFT prices...</p>
+          ) : portfolioError ? (
+            <div className="rounded-xl border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm text-rose-200">
+              {portfolioError}
+            </div>
+          ) : portfolio ? (
+            <>
+              <div className="mb-4 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+                <MetricCell label="Tracked Wallets" value={String(portfolio.summary.trackedWallets)} />
+                <MetricCell label="Minted NFTs" value={String(portfolio.summary.mintedNfts)} />
+                <MetricCell label="Current Holdings" value={String(portfolio.summary.holdingsCount)} />
+                <MetricCell label="Done Tasks" value={String(taskStats.done)} />
+                <MetricCell
+                  label="Realized PnL"
+                  value={formatCurrencyRows(portfolio.summary.realizedPnl)}
+                />
+                <MetricCell
+                  label="Unrealized PnL"
+                  value={formatCurrencyRows(portfolio.summary.unrealizedPnl)}
+                />
+              </div>
+
+              <div className="mb-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                <p className="mb-1 text-xs uppercase tracking-[0.12em] text-slate-400">Estimated Portfolio Value</p>
+                <p className="text-sm text-slate-200">{formatCurrencyRows(portfolio.summary.estimatedValue)}</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Live price requests: {portfolio.meta.priceCollectionsResolved}/{portfolio.meta.priceCollectionsRequested} |
+                  Updated {new Date(portfolio.meta.fetchedAt).toLocaleString()}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {portfolio.holdings.length === 0 ? (
+                  <p className="text-sm text-slate-300">No open NFT holdings yet from tracked wallet activity.</p>
+                ) : (
+                  portfolio.holdings.slice(0, 12).map((holding) => (
+                    <div
+                      key={`${holding.tokenContract}:${holding.tokenId}`}
+                      className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5"
+                    >
+                      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                        <p className="truncate text-sm text-white">
+                          {holding.collectionId} #{holding.tokenId}
+                        </p>
+                        <p className="text-xs text-slate-400">{holding.chain}</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                        <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5">
+                          Qty {holding.quantity}
+                        </span>
+                        <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5">
+                          Cost {holding.costBasisNative} {holding.currency}
+                        </span>
+                        <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5">
+                          Live {holding.livePriceNative ?? '-'} {holding.currency}
+                        </span>
+                        {holding.livePriceSource ? (
+                          <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5 uppercase tracking-wide">
+                            {holding.livePriceSource === 'ask_floor' ? 'Floor Ask' : 'Last Trade'}
+                          </span>
+                        ) : null}
+                        <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5">
+                          Value {holding.currentValueNative ?? '-'} {holding.currency}
+                        </span>
+                        <span
+                          className={`rounded-full border px-2 py-0.5 ${
+                            holding.unrealizedPnlNative === null
+                              ? 'border-slate-500/40 bg-slate-500/10 text-slate-300'
+                              : holding.unrealizedPnlNative >= 0
+                                ? 'border-emerald-300/40 bg-emerald-300/10 text-emerald-200'
+                                : 'border-rose-300/40 bg-rose-300/10 text-rose-200'
+                          }`}
+                        >
+                          PnL {holding.unrealizedPnlNative ?? '-'} {holding.currency}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-slate-300">Portfolio data unavailable.</p>
+          )}
+        </GlassCard>
+
         <GlassCard title="Farming Progress Charts" icon={<Droplets className="h-4 w-4" />} className="lg:col-span-12">
           <div className="mb-4 grid gap-2 sm:grid-cols-3">
             <MetricCell label="Projects" value={String(farmingStats.totalProjects)} />
@@ -428,4 +548,17 @@ function MetricCell({ label, value }: { label: string; value: string }) {
       <p className="mt-1 text-lg font-semibold text-white">{value}</p>
     </div>
   );
+}
+
+function formatCurrencyRows(rows: Array<{ currency: string; amount: number }>) {
+  if (!rows || rows.length === 0) return '0';
+  return rows
+    .slice(0, 3)
+    .map((row) => `${row.amount >= 0 ? '+' : ''}${round(row.amount)} ${row.currency}`)
+    .join(' | ');
+}
+
+function round(value: number, decimals = 4) {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
 }

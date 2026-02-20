@@ -20,10 +20,10 @@ function getInitials(nameOrEmail: string) {
 function getPageMeta(pathname: string) {
   if (pathname.startsWith('/dashboard')) return { title: 'Operations Hub', subtitle: 'Realtime overview' };
   if (pathname.startsWith('/analytics')) return { title: 'Analytics Matrix', subtitle: 'Behavior + trend intelligence' };
-  if (pathname.startsWith('/mints')) return { title: 'Mint Tracker', subtitle: 'Mints, reminders, countdowns' };
+  if (pathname.startsWith('/nft-mints') || pathname.startsWith('/mints'))
+    return { title: 'NFT Mint Tracker', subtitle: 'Mints, reminders, countdowns' };
   if (pathname.startsWith('/farming'))
     return { title: 'Projects / Testnets', subtitle: 'Track projects, testnets, tasks, and claim windows' };
-  if (pathname.startsWith('/productivity')) return { title: 'Productivity', subtitle: 'Tasks and board execution flow' };
   if (pathname.startsWith('/todo')) return { title: 'To-Do', subtitle: 'Personal task execution center' };
   if (pathname.startsWith('/wallet-tracker'))
     return { title: 'Wallet Tracker', subtitle: 'Track OpenSea buy/sell/mint events with alerts' };
@@ -39,7 +39,7 @@ export function TopHeader({ leadingAction }: TopHeaderProps) {
   const location = useLocation();
   const { canInstall, promptInstall } = usePwaInstall();
   const displayName = user?.displayName || user?.email || 'User';
-  const [utcNow, setUtcNow] = useState(() => new Date());
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const [isOnline, setIsOnline] = useState(() =>
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
@@ -48,7 +48,7 @@ export function TopHeader({ leadingAction }: TopHeaderProps) {
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      setUtcNow(new Date());
+      setCurrentTime(new Date());
     }, 1000);
 
     return () => window.clearInterval(timer);
@@ -82,7 +82,8 @@ export function TopHeader({ leadingAction }: TopHeaderProps) {
           <div className="hidden items-center gap-3 rounded-2xl border border-slate-700/70 bg-panel/70 px-3 py-2 lg:flex">
             <span className={`h-2 w-2 rounded-full ${isOnline ? 'bg-emerald-300' : 'bg-rose-300'}`} />
             <p className="text-xs uppercase tracking-[0.12em] text-slate-300">
-              {isOnline ? 'Online' : 'Offline'} | UTC {utcNow.toLocaleTimeString('en-GB', { hour12: false })}
+              {isOnline ? 'Online' : 'Offline'} | IST{' '}
+              {currentTime.toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Kolkata' })}
             </p>
           </div>
 

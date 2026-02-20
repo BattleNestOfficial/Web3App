@@ -131,6 +131,11 @@ export const env = {
     opensea: {
       apiBaseUrl: getOptionalEnv('OPENSEA_API_BASE_URL', 'https://api.opensea.io/api/v2'),
       apiKey: getOptionalEnv('OPENSEA_API_KEY')
+    },
+    magiceden: {
+      apiBaseUrl: getOptionalEnv('MAGICEDEN_API_BASE_URL', 'https://api-mainnet.magiceden.dev'),
+      apiKey: getOptionalEnv('MAGICEDEN_API_KEY'),
+      evmChain: getOptionalEnv('MAGICEDEN_EVM_CHAIN', 'ethereum')
     }
   },
   automation: {

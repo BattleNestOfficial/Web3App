@@ -7,7 +7,6 @@ import { DashboardPage } from '../pages/DashboardPage';
 import { FarmingTrackerPage } from '../pages/FarmingTrackerPage';
 import { MintTrackerPage } from '../pages/MintTrackerPage';
 import { NotFoundPage } from '../pages/NotFoundPage';
-import { ProductivityPage } from '../pages/ProductivityPage';
 import { ProjectsPage } from '../pages/ProjectsPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { TodoPage } from '../pages/TodoPage';
@@ -38,8 +37,12 @@ export const router = createBrowserRouter([
             element: <AnalyticsPage />
           },
           {
-            path: '/mints',
+            path: '/nft-mints',
             element: <MintTrackerPage />
+          },
+          {
+            path: '/mints',
+            element: <Navigate to="/nft-mints" replace />
           },
           {
             path: '/farming',
@@ -47,7 +50,7 @@ export const router = createBrowserRouter([
           },
           {
             path: '/productivity',
-            element: <ProductivityPage />
+            element: <Navigate to="/nft-mints" replace />
           },
           {
             path: '/todo',
