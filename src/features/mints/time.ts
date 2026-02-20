@@ -1,6 +1,6 @@
 const IST_OFFSET_MINUTES = 330;
 
-const TIMEZONE_OFFSETS: Record<string, number> = {
+const TIMEZONE_OFFSETS = {
   UTC: 0,
   GMT: 0,
   IST: 330,
@@ -12,7 +12,23 @@ const TIMEZONE_OFFSETS: Record<string, number> = {
   MDT: -360,
   PST: -480,
   PDT: -420
-};
+} as const;
+
+export type MintTimezone = keyof typeof TIMEZONE_OFFSETS;
+
+export const TIMEZONE_OPTIONS: Array<{ value: MintTimezone; label: string }> = [
+  { value: 'IST', label: 'IST (UTC+05:30)' },
+  { value: 'UTC', label: 'UTC (UTC+00:00)' },
+  { value: 'GMT', label: 'GMT (UTC+00:00)' },
+  { value: 'EST', label: 'EST (UTC-05:00)' },
+  { value: 'EDT', label: 'EDT (UTC-04:00)' },
+  { value: 'CST', label: 'CST (UTC-06:00)' },
+  { value: 'CDT', label: 'CDT (UTC-05:00)' },
+  { value: 'MST', label: 'MST (UTC-07:00)' },
+  { value: 'MDT', label: 'MDT (UTC-06:00)' },
+  { value: 'PST', label: 'PST (UTC-08:00)' },
+  { value: 'PDT', label: 'PDT (UTC-07:00)' }
+];
 
 const MONTHS: Record<string, number> = {
   jan: 1,
@@ -52,6 +68,16 @@ type DateParts = {
 
 function pad2(value: number) {
   return String(value).padStart(2, '0');
+}
+
+function getTimezoneOffsetMinutes(timezone: string): number {
+  const normalized = String(timezone ?? '')
+    .trim()
+    .toUpperCase();
+  if (!(normalized in TIMEZONE_OFFSETS)) {
+    throw new Error('Unsupported timezone. Choose one from the dropdown.');
+  }
+  return TIMEZONE_OFFSETS[normalized as MintTimezone];
 }
 
 function normalizeHour(hour: number, meridiem?: string) {
@@ -176,6 +202,41 @@ function parseDateParts(input: string) {
   return parseNumberDateInput(input) ?? parseNamedMonthInput(input);
 }
 
+export function splitTimestampByTimezone(timestamp: number, timezone: MintTimezone = 'IST') {
+  const offsetMinutes = getTimezoneOffsetMinutes(timezone);
+  const shifted = timestamp + offsetMinutes * 60_000;
+  const date = new Date(shifted);
+  return {
+    date: `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`,
+    time: `${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}`,
+    timezone
+  };
+}
+
+export function parseDateTimeSelection(dateValue: string, timeValue: string, timezone: string) {
+  const dateMatch = String(dateValue ?? '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const timeMatch = String(timeValue ?? '').trim().match(/^(\d{2}):(\d{2})$/);
+
+  if (!dateMatch || !timeMatch) {
+    throw new Error('Please select valid mint date and time.');
+  }
+
+  const parts: DateParts = {
+    year: Number(dateMatch[1]),
+    month: Number(dateMatch[2]),
+    day: Number(dateMatch[3]),
+    hour: Number(timeMatch[1]),
+    minute: Number(timeMatch[2]),
+    second: 0
+  };
+
+  if (!isValidDateParts(parts)) {
+    throw new Error('Please select a valid mint date/time.');
+  }
+
+  return toUtcTimestamp(parts, getTimezoneOffsetMinutes(timezone));
+}
+
 export function toIstDateInputValue(timestamp: number) {
   const shifted = timestamp + IST_OFFSET_MINUTES * 60_000;
   const iso = new Date(shifted).toISOString().slice(0, 16).replace('T', ' ');
@@ -235,11 +296,12 @@ export function parseDateInput(value: string) {
       const withoutZone = raw.slice(0, raw.length - tzMatch[0].length).trim();
       const parts = parseDateParts(withoutZone);
       if (parts) {
-        return toUtcTimestamp(parts, TIMEZONE_OFFSETS[zone]);
+        return toUtcTimestamp(parts, getTimezoneOffsetMinutes(zone));
       }
 
-      const sign = TIMEZONE_OFFSETS[zone] >= 0 ? '+' : '-';
-      const absMinutes = Math.abs(TIMEZONE_OFFSETS[zone]);
+      const offsetMinutes = getTimezoneOffsetMinutes(zone);
+      const sign = offsetMinutes >= 0 ? '+' : '-';
+      const absMinutes = Math.abs(offsetMinutes);
       const tzToken = `${sign}${pad2(Math.floor(absMinutes / 60))}:${pad2(absMinutes % 60)}`;
       const fallbackTimestamp = Date.parse(`${withoutZone} ${tzToken}`);
       if (Number.isFinite(fallbackTimestamp)) {

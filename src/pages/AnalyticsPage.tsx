@@ -3,10 +3,16 @@ import { motion } from 'framer-motion';
 import { BarChart3, CheckCircle2, Clock3, Droplets, TrendingUp } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import {
+  buildTrackedActivityEntries,
+  summarizeTrackedActivities,
+  type TrackedActivityEntry
+} from '../features/activity/stream';
 import { fetchNftPortfolioAnalytics, type PortfolioAnalytics } from '../features/analytics/api';
 import { farmingDB } from '../features/farming/db';
 import { mintDB } from '../features/mints/db';
 import { todoDB } from '../features/todo/db';
+import { fetchWalletActivityEvents } from '../features/walletTracker/api';
 
 type ChartPoint = {
   key: string;
@@ -95,6 +101,9 @@ export function AnalyticsPage() {
   const [portfolio, setPortfolio] = useState<PortfolioAnalytics | null>(null);
   const [isPortfolioLoading, setIsPortfolioLoading] = useState(true);
   const [portfolioError, setPortfolioError] = useState('');
+  const [trackedActivities, setTrackedActivities] = useState<TrackedActivityEntry[]>([]);
+  const [isActivityLoading, setIsActivityLoading] = useState(true);
+  const [activityError, setActivityError] = useState('');
 
   const mints = useMemo(() => mintRows ?? [], [mintRows]);
   const tasks = useMemo(() => taskRows ?? [], [taskRows]);
@@ -125,6 +134,40 @@ export function AnalyticsPage() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadTrackedActivities(showLoader: boolean) {
+      if (showLoader) {
+        setIsActivityLoading(true);
+      }
+      setActivityError('');
+      try {
+        const walletEvents = await fetchWalletActivityEvents({ limit: 250 });
+        if (!isMounted) return;
+        setTrackedActivities(buildTrackedActivityEntries(walletEvents, mints, 120));
+      } catch (error) {
+        if (!isMounted) return;
+        setTrackedActivities(buildTrackedActivityEntries([], mints, 120));
+        setActivityError(error instanceof Error ? error.message : 'Failed to load activity stream.');
+      } finally {
+        if (isMounted) {
+          setIsActivityLoading(false);
+        }
+      }
+    }
+
+    void loadTrackedActivities(true);
+    const timer = window.setInterval(() => {
+      void loadTrackedActivities(false);
+    }, 60_000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(timer);
+    };
+  }, [mints]);
 
   const mintStats = useMemo(() => {
     const total = mints.length;
@@ -280,6 +323,40 @@ export function AnalyticsPage() {
     };
   }, [projects]);
 
+  const activityStats = useMemo(() => {
+    const summaryAll = summarizeTrackedActivities(trackedActivities);
+    const windowStart = nowMs - 30 * 24 * 60 * 60 * 1000;
+    const recent = trackedActivities.filter((entry) => entry.happenedAt >= windowStart);
+    const summary30d = summarizeTrackedActivities(recent);
+
+    const dayKeys = buildRecentDayKeys(7, nowMs);
+    const byDay = new Map<string, number>();
+    for (const key of dayKeys) byDay.set(key, 0);
+    for (const entry of trackedActivities) {
+      const key = dayKey(entry.happenedAt);
+      if (!byDay.has(key)) continue;
+      byDay.set(key, (byDay.get(key) ?? 0) + 1);
+    }
+
+    const trendRaw = dayKeys.map((key) => ({
+      key,
+      label: dayLabel(key),
+      value: byDay.get(key) ?? 0
+    }));
+    const maxDaily = Math.max(1, ...trendRaw.map((row) => row.value), 1);
+    const trend: ChartPoint[] = trendRaw.map((row) => ({
+      ...row,
+      ratio: Math.round((row.value / maxDaily) * 100)
+    }));
+
+    return {
+      summaryAll,
+      summary30d,
+      trend,
+      recentEntries: trackedActivities.slice(0, 10)
+    };
+  }, [trackedActivities, nowMs]);
+
   return (
     <section className="mx-auto max-w-7xl">
       <motion.header
@@ -380,6 +457,70 @@ export function AnalyticsPage() {
               </div>
             ))}
           </div>
+        </GlassCard>
+
+        <GlassCard title="Wallet + Whitelist Activity" icon={<Clock3 className="h-4 w-4" />} className="lg:col-span-12">
+          {isActivityLoading ? (
+            <p className="text-sm text-slate-300">Loading minted, sold, and whitelist activities...</p>
+          ) : (
+            <>
+              <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                <MetricCell label="Total Activities" value={String(activityStats.summaryAll.total)} />
+                <MetricCell label="Minted NFTs (30d)" value={String(activityStats.summary30d.mintedNftCount)} />
+                <MetricCell label="Sold NFTs (30d)" value={String(activityStats.summary30d.soldNftCount)} />
+                <MetricCell
+                  label="Whitelist Entries (30d)"
+                  value={String(activityStats.summary30d.enteredWhitelistCount)}
+                />
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div>
+                  <p className="mb-2 text-xs uppercase tracking-[0.12em] text-slate-400">7-Day Activity Trend</p>
+                  <div className="flex h-36 items-end gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                    {activityStats.trend.map((point, index) => (
+                      <div key={point.key} className="flex flex-1 flex-col items-center justify-end gap-1">
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: `${Math.max(point.ratio, 6)}%`, opacity: 1 }}
+                          transition={{ duration: 0.3, delay: index * 0.04 }}
+                          className="w-full rounded-t-lg bg-gradient-to-t from-rose-400/35 to-cyan-400/70"
+                        />
+                        <p className="text-[10px] text-slate-400">{point.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-xs uppercase tracking-[0.12em] text-slate-400">Recent Activity</p>
+                  <div className="space-y-2">
+                    {activityStats.recentEntries.length === 0 ? (
+                      <p className="text-sm text-slate-300">No tracked activity yet.</p>
+                    ) : (
+                      activityStats.recentEntries.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-slate-300"
+                        >
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <span className={`rounded-full border px-2 py-0.5 ${activityBadgeClass(entry.kind)}`}>
+                              {activityKindLabel(entry.kind)}
+                            </span>
+                            <span className="text-slate-400">{formatAnalyticsTime(entry.happenedAt)}</span>
+                          </div>
+                          <p className="text-sm text-white">{entry.title}</p>
+                          <p className="mt-0.5 text-slate-400">{entry.detail}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {activityError ? <p className="mt-3 text-xs text-amber-200">{activityError}</p> : null}
+            </>
+          )}
         </GlassCard>
 
         <GlassCard title="NFT Portfolio Profit / Loss" icon={<Clock3 className="h-4 w-4" />} className="lg:col-span-12">
@@ -548,6 +689,29 @@ function MetricCell({ label, value }: { label: string; value: string }) {
       <p className="mt-1 text-lg font-semibold text-white">{value}</p>
     </div>
   );
+}
+
+function activityKindLabel(kind: TrackedActivityEntry['kind']) {
+  if (kind === 'minted_nft') return 'Minted NFT';
+  if (kind === 'sold_nft') return 'Sold NFT';
+  return 'Whitelist';
+}
+
+function activityBadgeClass(kind: TrackedActivityEntry['kind']) {
+  if (kind === 'minted_nft') return 'border-emerald-300/40 bg-emerald-300/10 text-emerald-200';
+  if (kind === 'sold_nft') return 'border-rose-300/40 bg-rose-300/10 text-rose-200';
+  return 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200';
+}
+
+function formatAnalyticsTime(timestamp: number) {
+  return new Date(timestamp).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
 }
 
 function formatCurrencyRows(rows: Array<{ currency: string; amount: number }>) {

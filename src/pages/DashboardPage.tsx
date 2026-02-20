@@ -26,18 +26,13 @@ import {
 } from '../features/ai/api';
 import {
   fetchUpcomingMarketplaceMints,
-  type MarketplaceMintCalendarMeta,
   type MarketplaceMintItem
 } from '../features/marketplaceMints/api';
+import { buildTrackedActivityEntries, type TrackedActivityEntry } from '../features/activity/stream';
+import { mintDB } from '../features/mints/db';
 import { todoDB, type TodoTaskRecord } from '../features/todo/db';
+import { fetchWalletActivityEvents } from '../features/walletTracker/api';
 import { Button } from '../components/ui/Button';
-
-const timelineItems = [
-  { time: '09:15', title: 'Whitelist snapshot generated', detail: '2,304 wallets synced' },
-  { time: '10:40', title: 'Mint page performance check', detail: 'LCP improved by 18%' },
-  { time: '12:10', title: 'Community sync call', detail: 'Roadmap and reveal date confirmed' },
-  { time: '14:05', title: 'Treasury alert review', detail: 'No anomalies detected' }
-];
 
 const defaultKeywords = ['mint', 'testnet', 'airdrop'];
 
@@ -104,12 +99,17 @@ export function DashboardPage() {
   const [isAiLoadingDailySummary, setIsAiLoadingDailySummary] = useState(false);
   const [extractingTweetId, setExtractingTweetId] = useState<string | null>(null);
   const [calendarItems, setCalendarItems] = useState<MarketplaceMintItem[]>([]);
-  const [calendarMeta, setCalendarMeta] = useState<MarketplaceMintCalendarMeta | null>(null);
   const [isCalendarLoading, setIsCalendarLoading] = useState(true);
-  const [isCalendarRefreshing, setIsCalendarRefreshing] = useState(false);
-  const [calendarError, setCalendarError] = useState('');
+  const [activityTimeline, setActivityTimeline] = useState<TrackedActivityEntry[]>([]);
+  const [isActivityLoading, setIsActivityLoading] = useState(true);
+  const [activityError, setActivityError] = useState('');
   const [nowTick, setNowTick] = useState(() => Date.now());
   const todoTasks = useLiveQuery(async () => todoDB.tasks.toArray(), []);
+  const mintRows = useLiveQuery(
+    async () => (await mintDB.mints.toArray()).filter((mint) => mint.deletedAt === null),
+    []
+  );
+  const localMints = useMemo(() => mintRows ?? [], [mintRows]);
 
   const accountFilterKey = useMemo(() => selectedAccounts.join('|'), [selectedAccounts]);
   const keywordFilterKey = useMemo(() => selectedKeywords.join('|'), [selectedKeywords]);
@@ -178,6 +178,40 @@ export function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    let isMounted = true;
+
+    async function loadActivityTimeline(showLoader: boolean) {
+      if (showLoader) {
+        setIsActivityLoading(true);
+      }
+      setActivityError('');
+      try {
+        const walletEvents = await fetchWalletActivityEvents({ limit: 160 });
+        if (!isMounted) return;
+        setActivityTimeline(buildTrackedActivityEntries(walletEvents, localMints, 12));
+      } catch (error) {
+        if (!isMounted) return;
+        setActivityTimeline(buildTrackedActivityEntries([], localMints, 12));
+        setActivityError(error instanceof Error ? error.message : 'Failed to load activity timeline.');
+      } finally {
+        if (isMounted) {
+          setIsActivityLoading(false);
+        }
+      }
+    }
+
+    void loadActivityTimeline(true);
+    const timer = window.setInterval(() => {
+      void loadActivityTimeline(false);
+    }, 45_000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(timer);
+    };
+  }, [localMints]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       setNowTick(Date.now());
     }, 1000);
@@ -190,16 +224,14 @@ export function DashboardPage() {
 
     async function loadMintCalendar() {
       setIsCalendarLoading(true);
-      setCalendarError('');
 
       try {
         const response = await fetchUpcomingMarketplaceMints({ days: 45, limit: 24 });
         if (!isMounted) return;
         setCalendarItems(response.data);
-        setCalendarMeta(response.meta);
       } catch (error) {
         if (!isMounted) return;
-        setCalendarError(error instanceof Error ? error.message : 'Failed to load marketplace mint calendar.');
+        setCalendarItems([]);
       } finally {
         if (isMounted) {
           setIsCalendarLoading(false);
@@ -303,20 +335,6 @@ export function DashboardPage() {
     }
   }
 
-  async function refreshMintCalendar() {
-    setIsCalendarRefreshing(true);
-    setCalendarError('');
-    try {
-      const response = await fetchUpcomingMarketplaceMints({ days: 45, limit: 24 });
-      setCalendarItems(response.data);
-      setCalendarMeta(response.meta);
-    } catch (error) {
-      setCalendarError(error instanceof Error ? error.message : 'Failed to refresh mint calendar.');
-    } finally {
-      setIsCalendarRefreshing(false);
-    }
-  }
-
   function toggleKeyword(keyword: string) {
     setSelectedKeywords((prev) => {
       const normalized = keyword.toLowerCase();
@@ -383,7 +401,9 @@ export function DashboardPage() {
           icon={<CalendarClock className="h-4 w-4" />}
           className="lg:col-span-5"
         >
-          {nextMarketplaceMint ? (
+          {isCalendarLoading ? (
+            <p className="text-sm text-slate-300">Loading upcoming mint feed...</p>
+          ) : nextMarketplaceMint ? (
             <>
               <div className="flex flex-wrap items-center gap-2">
                 <span
@@ -444,123 +464,28 @@ export function DashboardPage() {
         </GlassCard>
 
         <GlassCard title="Activity Timeline" icon={<Clock3 className="h-4 w-4" />} className="lg:col-span-4">
-          <div className="relative pl-5">
-            <div className="absolute left-[7px] top-1 h-[calc(100%-8px)] w-px bg-white/15" />
-            <ul className="space-y-4">
-              {timelineItems.map((entry) => (
-                <li key={entry.time + entry.title} className="relative">
-                  <span className="absolute -left-5 top-1.5 h-3 w-3 rounded-full border border-cyan-300/50 bg-cyan-300/20" />
-                  <p className="text-xs text-slate-400">{entry.time}</p>
-                  <p className="text-sm text-white">{entry.title}</p>
-                  <p className="text-xs text-slate-400">{entry.detail}</p>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </GlassCard>
-
-        <GlassCard title="NFT Mint Calendar" icon={<CalendarClock className="h-4 w-4" />} className="lg:col-span-8">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full border border-cyan-300/35 bg-cyan-300/10 px-2 py-0.5 text-xs text-cyan-200">
-                Magic Eden: {calendarMeta?.providers.magiceden.count ?? 0}
-              </span>
-              <span className="rounded-full border border-emerald-300/35 bg-emerald-300/10 px-2 py-0.5 text-xs text-emerald-200">
-                OpenSea: {calendarMeta?.providers.opensea.count ?? 0}
-              </span>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              className="px-3"
-              onClick={() => void refreshMintCalendar()}
-              disabled={isCalendarRefreshing}
-            >
-              <RefreshCw className={`mr-2 h-4 w-4 ${isCalendarRefreshing ? 'animate-spin' : ''}`} />
-              {isCalendarRefreshing ? 'Refreshing...' : 'Refresh'}
-            </Button>
-          </div>
-
-          {calendarMeta ? (
-            <p className="mb-3 text-xs text-slate-400">
-              Window: next {calendarMeta.days} days | Last fetched {new Date(calendarMeta.fetchedAt).toLocaleString()}
-            </p>
-          ) : null}
-
-          {calendarError ? (
-            <div className="mb-3 rounded-xl border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm text-rose-200">
-              {calendarError}
-            </div>
-          ) : null}
-
-          {isCalendarLoading ? (
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-5 text-sm text-slate-300">
-              Loading upcoming mints from OpenSea and Magic Eden...
-            </div>
-          ) : calendarItems.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-700/80 bg-panel/60 px-3 py-5 text-sm text-slate-300">
-              No upcoming marketplace mints found in the selected time window.
-            </div>
+          {isActivityLoading ? (
+            <p className="text-sm text-slate-300">Loading wallet and whitelist activity...</p>
           ) : (
-            <div className="space-y-2">
-              {calendarItems.slice(0, 12).map((mint, index) => (
-                <motion.article
-                  key={mint.id}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.18, delay: index * 0.02 }}
-                  className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3"
-                >
-                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
+            <div className="relative pl-5">
+              <div className="absolute left-[7px] top-1 h-[calc(100%-8px)] w-px bg-white/15" />
+              {activityTimeline.length === 0 ? (
+                <p className="text-sm text-slate-300">No activity captured yet.</p>
+              ) : (
+                <ul className="space-y-4">
+                  {activityTimeline.map((entry) => (
+                    <li key={entry.id} className="relative">
                       <span
-                        className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
-                          mint.source === 'magiceden'
-                            ? 'border-cyan-300/35 bg-cyan-300/10 text-cyan-200'
-                            : 'border-emerald-300/35 bg-emerald-300/10 text-emerald-200'
-                        }`}
-                      >
-                        {mint.sourceLabel}
-                      </span>
-                      <p className="truncate text-sm text-white">{mint.name}</p>
-                    </div>
-                    <p className="text-xs text-slate-400">{new Date(mint.startsAt).toLocaleString()}</p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                    <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5 uppercase tracking-wide">
-                      {mint.chain}
-                    </span>
-                    {mint.stageLabel ? (
-                      <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5 uppercase tracking-wide">
-                        {mint.stageLabel}
-                      </span>
-                    ) : null}
-                    {mint.price !== null ? (
-                      <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5">
-                        {mint.price} {mint.currency ?? ''}
-                      </span>
-                    ) : null}
-                    {mint.supply !== null ? (
-                      <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5">
-                        Supply {mint.supply}
-                      </span>
-                    ) : null}
-                    <span className="text-glow">{formatTimeUntil(mint.startsAt, nowTick)}</span>
-                    {mint.url ? (
-                      <a
-                        href={mint.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="ml-auto inline-flex items-center rounded-lg border border-slate-600 bg-panelAlt px-2.5 py-1 text-xs text-slate-100 transition hover:border-slate-500"
-                      >
-                        Open
-                        <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                      </a>
-                    ) : null}
-                  </div>
-                </motion.article>
-              ))}
+                        className={`absolute -left-5 top-1.5 h-3 w-3 rounded-full border ${timelineDotClass(entry.kind)}`}
+                      />
+                      <p className="text-xs text-slate-400">{formatTimelineTime(entry.happenedAt)}</p>
+                      <p className="text-sm text-white">{entry.title}</p>
+                      <p className="text-xs text-slate-400">{entry.detail}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {activityError ? <p className="mt-3 text-xs text-amber-200">{activityError}</p> : null}
             </div>
           )}
         </GlassCard>
@@ -837,6 +762,24 @@ function formatTimeUntil(isoString: string, nowMs: number) {
   if (days > 0) return `Starts in ${days}d ${hours}h`;
   if (hours > 0) return `Starts in ${hours}h ${minutes}m`;
   return `Starts in ${minutes}m`;
+}
+
+function timelineDotClass(kind: TrackedActivityEntry['kind']) {
+  if (kind === 'minted_nft') return 'border-emerald-300/50 bg-emerald-300/20';
+  if (kind === 'sold_nft') return 'border-rose-300/50 bg-rose-300/20';
+  return 'border-cyan-300/50 bg-cyan-300/20';
+}
+
+function formatTimelineTime(timestamp: number) {
+  const value = new Date(timestamp).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+  return `${value} IST`;
 }
 
 function formatCountdownParts(isoString: string, nowMs: number) {
