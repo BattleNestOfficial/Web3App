@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { motion } from 'framer-motion';
-import { BarChart3, CheckCircle2, Clock3, Droplets, RefreshCw, TrendingUp } from 'lucide-react';
+import { BarChart3, Bug, CheckCircle2, Clock3, Droplets, TrendingUp } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
@@ -9,33 +9,18 @@ import {
   type TrackedActivityEntry
 } from '../features/activity/stream';
 import { listRecentAppActivityEvents } from '../features/activity/log';
-import {
-  createApiCostEvent,
-  fetchApiCostSummary,
-  fetchNftPortfolioAnalytics,
-  type ApiCostSummary,
-  type PortfolioAnalytics
-} from '../features/analytics/api';
+import { fetchNftPortfolioAnalytics, type PortfolioAnalytics } from '../features/analytics/api';
+import { bugDB } from '../features/bugs/db';
 import { farmingDB } from '../features/farming/db';
 import { mintDB } from '../features/mints/db';
 import { todoDB } from '../features/todo/db';
 import { fetchWalletActivityEvents, type WalletActivityEvent } from '../features/walletTracker/api';
-import { Button } from '../components/ui/Button';
-import { Input } from '../components/ui/Input';
 
 type ChartPoint = {
   key: string;
   label: string;
   value: number;
   ratio: number;
-};
-
-type CustomApiCostFormState = {
-  providerKey: string;
-  operation: string;
-  requestCount: string;
-  costUsd: string;
-  note: string;
 };
 
 function GlassCard({
@@ -104,14 +89,6 @@ function buildRecentDayKeys(windowSize: number, nowMs: number) {
   return output;
 }
 
-const defaultCustomApiCostForm: CustomApiCostFormState = {
-  providerKey: 'rest',
-  operation: 'manual_entry',
-  requestCount: '1',
-  costUsd: '',
-  note: ''
-};
-
 export function AnalyticsPage() {
   const nowMs = Date.now();
   const mintRows = useLiveQuery(
@@ -123,17 +100,11 @@ export function AnalyticsPage() {
     async () => (await farmingDB.projects.toArray()).filter((project) => project.deletedAt === null),
     []
   );
+  const bugRows = useLiveQuery(async () => bugDB.bugs.toArray(), []);
   const appActivityRows = useLiveQuery(async () => listRecentAppActivityEvents(400), []);
   const [portfolio, setPortfolio] = useState<PortfolioAnalytics | null>(null);
   const [isPortfolioLoading, setIsPortfolioLoading] = useState(true);
   const [portfolioError, setPortfolioError] = useState('');
-  const [apiCosts, setApiCosts] = useState<ApiCostSummary | null>(null);
-  const [isApiCostsLoading, setIsApiCostsLoading] = useState(true);
-  const [isApiCostsRefreshing, setIsApiCostsRefreshing] = useState(false);
-  const [apiCostsError, setApiCostsError] = useState('');
-  const [customApiCostForm, setCustomApiCostForm] = useState<CustomApiCostFormState>(defaultCustomApiCostForm);
-  const [isCustomCostSubmitting, setIsCustomCostSubmitting] = useState(false);
-  const [customCostMessage, setCustomCostMessage] = useState('');
   const [walletTimelineEvents, setWalletTimelineEvents] = useState<WalletActivityEvent[]>([]);
   const [isActivityLoading, setIsActivityLoading] = useState(true);
   const [activityError, setActivityError] = useState('');
@@ -141,6 +112,7 @@ export function AnalyticsPage() {
   const mints = useMemo(() => mintRows ?? [], [mintRows]);
   const tasks = useMemo(() => taskRows ?? [], [taskRows]);
   const projects = useMemo(() => farmingRows ?? [], [farmingRows]);
+  const bugs = useMemo(() => (bugRows ?? []).sort((a, b) => b.updatedAt - a.updatedAt), [bugRows]);
   const appActivityEvents = useMemo(() => appActivityRows ?? [], [appActivityRows]);
   const trackedActivities = useMemo(
     () => buildTrackedActivityEntries(walletTimelineEvents, mints, appActivityEvents, 120),
@@ -170,43 +142,6 @@ export function AnalyticsPage() {
     void loadPortfolio();
     return () => {
       isMounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadApiCosts(showLoader: boolean) {
-      if (showLoader) {
-        setIsApiCostsLoading(true);
-      } else {
-        setIsApiCostsRefreshing(true);
-      }
-      setApiCostsError('');
-
-      try {
-        const response = await fetchApiCostSummary({ days: 30, recentLimit: 40, providerLimit: 20 });
-        if (!isMounted) return;
-        setApiCosts(response);
-      } catch (error) {
-        if (!isMounted) return;
-        setApiCostsError(error instanceof Error ? error.message : 'Failed to load API cost analytics.');
-      } finally {
-        if (isMounted) {
-          setIsApiCostsLoading(false);
-          setIsApiCostsRefreshing(false);
-        }
-      }
-    }
-
-    void loadApiCosts(true);
-    const timer = window.setInterval(() => {
-      void loadApiCosts(false);
-    }, 45_000);
-
-    return () => {
-      isMounted = false;
-      window.clearInterval(timer);
     };
   }, []);
 
@@ -398,6 +333,60 @@ export function AnalyticsPage() {
     };
   }, [projects]);
 
+  const bugStats = useMemo(() => {
+    const total = bugs.length;
+    const open = bugs.filter((bug) => bug.status === 'open').length;
+    const review = bugs.filter((bug) => bug.status === 'review').length;
+    const resolved = bugs.filter((bug) => bug.status === 'resolved').length;
+    const closed = bugs.filter((bug) => bug.status === 'closed').length;
+    const critical = bugs.filter((bug) => bug.priority === 'critical').length;
+    const high = bugs.filter((bug) => bug.priority === 'high').length;
+
+    const statusRows = [
+      { key: 'open', label: 'Open', value: open },
+      { key: 'review', label: 'Review', value: review },
+      { key: 'resolved', label: 'Resolved', value: resolved },
+      { key: 'closed', label: 'Closed', value: closed }
+    ];
+
+    const statusBreakdown: ChartPoint[] = statusRows.map((row) => ({
+      ...row,
+      ratio: total > 0 ? Math.round((row.value / total) * 100) : 0
+    }));
+
+    const dayKeys = buildRecentDayKeys(7, nowMs);
+    const updatesByDay = new Map<string, number>();
+    for (const key of dayKeys) updatesByDay.set(key, 0);
+    for (const bug of bugs) {
+      const key = dayKey(bug.updatedAt);
+      if (!updatesByDay.has(key)) continue;
+      updatesByDay.set(key, (updatesByDay.get(key) ?? 0) + 1);
+    }
+    const trendRaw = dayKeys.map((key) => ({
+      key,
+      label: dayLabel(key),
+      value: updatesByDay.get(key) ?? 0
+    }));
+    const maxDaily = Math.max(1, ...trendRaw.map((point) => point.value));
+    const trend: ChartPoint[] = trendRaw.map((point) => ({
+      ...point,
+      ratio: Math.round((point.value / maxDaily) * 100)
+    }));
+
+    return {
+      total,
+      open,
+      review,
+      resolved,
+      closed,
+      critical,
+      high,
+      statusBreakdown,
+      trend,
+      recent: bugs.slice(0, 8)
+    };
+  }, [bugs, nowMs]);
+
   const activityStats = useMemo(() => {
     const summaryAll = summarizeTrackedActivities(trackedActivities);
     const windowStart = nowMs - 30 * 24 * 60 * 60 * 1000;
@@ -431,54 +420,6 @@ export function AnalyticsPage() {
       recentEntries: trackedActivities.slice(0, 10)
     };
   }, [trackedActivities, nowMs]);
-
-  async function handleRefreshApiCosts() {
-    setIsApiCostsRefreshing(true);
-    setApiCostsError('');
-    try {
-      const response = await fetchApiCostSummary({ days: 30, recentLimit: 40, providerLimit: 20 });
-      setApiCosts(response);
-    } catch (error) {
-      setApiCostsError(error instanceof Error ? error.message : 'Failed to refresh API cost analytics.');
-    } finally {
-      setIsApiCostsRefreshing(false);
-    }
-  }
-
-  async function handleSubmitCustomApiCost() {
-    setCustomCostMessage('');
-    setApiCostsError('');
-    const requestCount = Number(customApiCostForm.requestCount || '1');
-    const costUsd = Number(customApiCostForm.costUsd);
-    if (!Number.isFinite(costUsd) || costUsd < 0) {
-      setCustomCostMessage('Cost must be a valid non-negative number.');
-      return;
-    }
-    if (!Number.isFinite(requestCount) || requestCount <= 0) {
-      setCustomCostMessage('Request count must be greater than zero.');
-      return;
-    }
-
-    setIsCustomCostSubmitting(true);
-    try {
-      await createApiCostEvent({
-        providerKey: customApiCostForm.providerKey.trim().toLowerCase() || 'rest',
-        operation: customApiCostForm.operation.trim() || 'manual_entry',
-        requestCount: Math.floor(requestCount),
-        costUsd,
-        success: true,
-        metadata: customApiCostForm.note.trim() ? { note: customApiCostForm.note.trim(), source: 'manual_ui' } : { source: 'manual_ui' }
-      });
-      setCustomApiCostForm((prev) => ({ ...prev, costUsd: '', note: '' }));
-      setCustomCostMessage('Custom API cost logged.');
-      const refreshed = await fetchApiCostSummary({ days: 30, recentLimit: 40, providerLimit: 20 });
-      setApiCosts(refreshed);
-    } catch (error) {
-      setCustomCostMessage(error instanceof Error ? error.message : 'Failed to save custom API cost.');
-    } finally {
-      setIsCustomCostSubmitting(false);
-    }
-  }
 
   return (
     <section className="mx-auto max-w-7xl">
@@ -647,150 +588,82 @@ export function AnalyticsPage() {
           )}
         </GlassCard>
 
-        <GlassCard title="API Cost Tracker" icon={<BarChart3 className="h-4 w-4" />} className="lg:col-span-12">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs uppercase tracking-[0.12em] text-slate-400">
-              Auto-tracked: OpenAI, Twitter, Brevo, OpenSea, Magic Eden | Window: Last {apiCosts?.windowDays ?? 30} days
-            </p>
-            <Button
-              type="button"
-              variant="ghost"
-              className="px-3"
-              onClick={() => void handleRefreshApiCosts()}
-              disabled={isApiCostsRefreshing}
-            >
-              <RefreshCw className={`mr-2 h-4 w-4 ${isApiCostsRefreshing ? 'animate-spin' : ''}`} />
-              {isApiCostsRefreshing ? 'Refreshing...' : 'Refresh'}
-            </Button>
+        <GlassCard title="Bug Tracking Overview" icon={<Bug className="h-4 w-4" />} className="lg:col-span-12">
+          <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+            <MetricCell label="Total Bugs" value={String(bugStats.total)} />
+            <MetricCell label="Open" value={String(bugStats.open)} />
+            <MetricCell label="Review" value={String(bugStats.review)} />
+            <MetricCell label="Resolved" value={String(bugStats.resolved)} />
+            <MetricCell label="Critical" value={String(bugStats.critical)} />
+            <MetricCell label="High Priority" value={String(bugStats.high)} />
           </div>
 
-          {isApiCostsLoading ? (
-            <p className="text-sm text-slate-300">Loading API usage and cost records...</p>
-          ) : apiCosts ? (
-            <>
-              <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-                <MetricCell label="30d Cost (USD)" value={formatUsd(apiCosts.totals.window.totalCostUsd)} />
-                <MetricCell label="30d Requests" value={String(apiCosts.totals.window.totalRequests)} />
-                <MetricCell label="OpenAI Input Tokens" value={String(apiCosts.totals.window.totalInputTokens)} />
-                <MetricCell label="OpenAI Output Tokens" value={String(apiCosts.totals.window.totalOutputTokens)} />
-                <MetricCell label="All-Time Cost (USD)" value={formatUsd(apiCosts.totals.allTime.totalCostUsd)} />
-              </div>
-
-              <div className="mb-4 grid gap-4 lg:grid-cols-2">
-                <div>
-                  <p className="mb-2 text-xs uppercase tracking-[0.12em] text-slate-400">Provider Breakdown (30d)</p>
-                  {apiCosts.providers.length === 0 ? (
-                    <p className="text-sm text-slate-300">No API usage events recorded yet.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {apiCosts.providers.map((row) => (
-                        <div key={row.providerKey} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
-                          <div className="mb-1 flex items-center justify-between gap-2">
-                            <p className="text-sm uppercase text-white">{row.providerKey}</p>
-                            <p className="text-xs text-cyan-200">{formatUsd(row.totalCostUsd)}</p>
-                          </div>
-                          <p className="text-xs text-slate-400">
-                            Requests: {row.totalRequests} | Events: {row.eventsCount}
-                            {row.lastEventAt ? ` | Last: ${new Date(row.lastEventAt).toLocaleString()}` : ''}
-                          </p>
-                        </div>
-                      ))}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div>
+              <p className="mb-2 text-xs uppercase tracking-[0.12em] text-slate-400">Status Breakdown</p>
+              <div className="space-y-2">
+                {bugStats.statusBreakdown.map((row, index) => (
+                  <div key={row.key}>
+                    <div className="mb-1 flex items-center justify-between text-xs text-slate-300">
+                      <span>{row.label}</span>
+                      <span>{row.value}</span>
                     </div>
-                  )}
-                </div>
-
-                <div>
-                  <p className="mb-2 text-xs uppercase tracking-[0.12em] text-slate-400">Manual Cost Entry (Other APIs)</p>
-                  <div className="space-y-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                    <Input
-                      placeholder="Provider key (e.g. alchemy, coingecko, rest)"
-                      value={customApiCostForm.providerKey}
-                      onChange={(event) =>
-                        setCustomApiCostForm((prev) => ({ ...prev, providerKey: event.target.value }))
-                      }
-                    />
-                    <Input
-                      placeholder="Operation (optional)"
-                      value={customApiCostForm.operation}
-                      onChange={(event) =>
-                        setCustomApiCostForm((prev) => ({ ...prev, operation: event.target.value }))
-                      }
-                    />
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <Input
-                        type="number"
-                        min="1"
-                        placeholder="Request count"
-                        value={customApiCostForm.requestCount}
-                        onChange={(event) =>
-                          setCustomApiCostForm((prev) => ({ ...prev, requestCount: event.target.value }))
-                        }
+                    <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${Math.max(row.ratio, 4)}%` }}
+                        transition={{ duration: 0.35, delay: index * 0.04 }}
+                        className="h-full rounded-full bg-gradient-to-r from-rose-300/90 to-amber-300/90"
                       />
-                      <Input
-                        type="number"
-                        min="0"
-                        step="0.000001"
-                        placeholder="Cost USD"
-                        value={customApiCostForm.costUsd}
-                        onChange={(event) =>
-                          setCustomApiCostForm((prev) => ({ ...prev, costUsd: event.target.value }))
-                        }
-                      />
-                    </div>
-                    <Input
-                      placeholder="Note (optional)"
-                      value={customApiCostForm.note}
-                      onChange={(event) => setCustomApiCostForm((prev) => ({ ...prev, note: event.target.value }))}
-                    />
-                    <div className="flex items-center justify-between gap-2">
-                      <Button
-                        type="button"
-                        onClick={() => void handleSubmitCustomApiCost()}
-                        disabled={isCustomCostSubmitting}
-                      >
-                        {isCustomCostSubmitting ? 'Saving...' : 'Log Cost'}
-                      </Button>
-                      {customCostMessage ? <p className="text-xs text-slate-300">{customCostMessage}</p> : null}
                     </div>
                   </div>
-                </div>
+                ))}
               </div>
 
-              <p className="mb-2 text-xs uppercase tracking-[0.12em] text-slate-400">Recent API Usage Events</p>
-              <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
-                {apiCosts.recentEvents.length === 0 ? (
-                  <p className="text-sm text-slate-300">No events yet.</p>
+              <p className="mb-2 mt-4 text-xs uppercase tracking-[0.12em] text-slate-400">7-Day Bug Update Trend</p>
+              <div className="flex h-36 items-end gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                {bugStats.trend.map((point, index) => (
+                  <div key={point.key} className="flex flex-1 flex-col items-center justify-end gap-1">
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: `${Math.max(point.ratio, 6)}%`, opacity: 1 }}
+                      transition={{ duration: 0.3, delay: index * 0.04 }}
+                      className="w-full rounded-t-lg bg-gradient-to-t from-amber-400/35 to-rose-400/70"
+                    />
+                    <p className="text-[10px] text-slate-400">{point.label}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs uppercase tracking-[0.12em] text-slate-400">Recent Bug Updates</p>
+              <div className="space-y-2">
+                {bugStats.recent.length === 0 ? (
+                  <p className="text-sm text-slate-300">No bug reports yet.</p>
                 ) : (
-                  apiCosts.recentEvents.slice(0, 30).map((event) => (
-                    <div key={event.id} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs">
+                  bugStats.recent.map((bug) => (
+                    <div key={bug.id ?? `${bug.title}-${bug.updatedAt}`} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs">
                       <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-                        <p className="uppercase text-white">
-                          {event.providerKey} | {event.operation}
-                        </p>
-                        <p className={event.success ? 'text-emerald-200' : 'text-rose-200'}>
-                          {event.success ? 'OK' : 'FAILED'}
-                          {event.httpStatus ? ` (${event.httpStatus})` : ''}
-                        </p>
+                        <p className="text-sm text-white">{bug.title}</p>
+                        <p className="text-slate-400">{formatAnalyticsTime(bug.updatedAt)}</p>
                       </div>
-                      <p className="text-slate-300">
-                        Cost: {formatUsd(event.costUsd)} | Requests: {event.requestCount}
-                        {event.inputTokens > 0 || event.outputTokens > 0
-                          ? ` | Tokens: in ${event.inputTokens}, out ${event.outputTokens}`
-                          : ''}
-                      </p>
-                      <p className="text-slate-500">
-                        {event.endpoint ?? 'No endpoint'} | {new Date(event.createdAt).toLocaleString()}
-                      </p>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className={`rounded-full border px-2 py-0.5 ${bugPriorityBadgeClass(bug.priority)}`}>
+                          {bug.priority}
+                        </span>
+                        <span className={`rounded-full border px-2 py-0.5 ${bugStatusBadgeClass(bug.status)}`}>
+                          {bugStatusLabel(bug.status)}
+                        </span>
+                        <span className="text-slate-400">{bug.notes.length} note(s)</span>
+                        <span className="text-slate-500">{bug.screenshots.length} screenshot(s)</span>
+                      </div>
                     </div>
                   ))
                 )}
               </div>
-            </>
-          ) : (
-            <p className="text-sm text-slate-300">API cost data unavailable.</p>
-          )}
-
-          {apiCostsError ? <p className="mt-3 text-xs text-amber-200">{apiCostsError}</p> : null}
+            </div>
+          </div>
         </GlassCard>
 
         <GlassCard title="NFT Portfolio Profit / Loss" icon={<Clock3 className="h-4 w-4" />} className="lg:col-span-12">
@@ -975,6 +848,27 @@ function activityBadgeClass(kind: TrackedActivityEntry['kind']) {
   return 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200';
 }
 
+function bugPriorityBadgeClass(priority: string) {
+  if (priority === 'critical') return 'border-rose-300/40 bg-rose-300/10 text-rose-200';
+  if (priority === 'high') return 'border-amber-300/40 bg-amber-300/10 text-amber-200';
+  if (priority === 'medium') return 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200';
+  return 'border-emerald-300/40 bg-emerald-300/10 text-emerald-200';
+}
+
+function bugStatusBadgeClass(status: string) {
+  if (status === 'open') return 'border-rose-300/40 bg-rose-300/10 text-rose-200';
+  if (status === 'review') return 'border-amber-300/40 bg-amber-300/10 text-amber-200';
+  if (status === 'resolved') return 'border-emerald-300/40 bg-emerald-300/10 text-emerald-200';
+  return 'border-slate-500/50 bg-slate-500/10 text-slate-200';
+}
+
+function bugStatusLabel(status: string) {
+  if (status === 'open') return 'Open';
+  if (status === 'review') return 'Review';
+  if (status === 'resolved') return 'Resolved';
+  return 'Closed';
+}
+
 function formatAnalyticsTime(timestamp: number) {
   return new Date(timestamp).toLocaleString('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -992,10 +886,6 @@ function formatCurrencyRows(rows: Array<{ currency: string; amount: number }>) {
     .slice(0, 3)
     .map((row) => `${row.amount >= 0 ? '+' : ''}${round(row.amount)} ${row.currency}`)
     .join(' | ');
-}
-
-function formatUsd(value: number) {
-  return `$${round(value, 6)}`;
 }
 
 function round(value: number, decimals = 4) {

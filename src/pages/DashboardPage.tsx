@@ -16,11 +16,6 @@ import type { ReactNode } from 'react';
 import { useAuth } from '../app/providers/AuthProvider';
 import { fetchAlphaFeed, syncAlphaFeed, type AlphaFeedMeta, type AlphaTweet } from '../features/alphaFeed/api';
 import {
-  fetchUpcomingMarketplaceMints,
-  type MarketplaceMintCalendarMeta,
-  type MarketplaceMintItem
-} from '../features/marketplaceMints/api';
-import {
   extractMintDetailsWithAi,
   fetchDailyProductivitySummaryWithAi,
   generateFarmingTasksWithAi,
@@ -136,11 +131,6 @@ export function DashboardPage() {
   const [companionError, setCompanionError] = useState('');
   const [updatingTaskId, setUpdatingTaskId] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
-  const [marketplaceMints, setMarketplaceMints] = useState<MarketplaceMintItem[]>([]);
-  const [marketplaceMeta, setMarketplaceMeta] = useState<MarketplaceMintCalendarMeta | null>(null);
-  const [isMarketplaceLoading, setIsMarketplaceLoading] = useState(true);
-  const [isMarketplaceRefreshing, setIsMarketplaceRefreshing] = useState(false);
-  const [marketplaceError, setMarketplaceError] = useState('');
   const todoTasks = useLiveQuery(async () => todoDB.tasks.toArray(), []);
   const mintRows = useLiveQuery(
     async () => (await mintDB.mints.toArray()).filter((mint) => mint.deletedAt === null),
@@ -276,46 +266,6 @@ export function DashboardPage() {
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadMarketplace(showLoader: boolean) {
-      if (showLoader) {
-        setIsMarketplaceLoading(true);
-      } else {
-        setIsMarketplaceRefreshing(true);
-      }
-      setMarketplaceError('');
-
-      try {
-        const response = await fetchUpcomingMarketplaceMints({ days: 90, limit: 120 });
-        if (!isMounted) return;
-        setMarketplaceMints(response.data);
-        setMarketplaceMeta(response.meta);
-      } catch (error) {
-        if (!isMounted) return;
-        setMarketplaceMints([]);
-        setMarketplaceMeta(null);
-        setMarketplaceError(error instanceof Error ? error.message : 'Failed to load NFT calendar.');
-      } finally {
-        if (isMounted) {
-          setIsMarketplaceLoading(false);
-          setIsMarketplaceRefreshing(false);
-        }
-      }
-    }
-
-    void loadMarketplace(true);
-    const timer = window.setInterval(() => {
-      void loadMarketplace(false);
-    }, 90_000);
-
-    return () => {
-      isMounted = false;
-      window.clearInterval(timer);
-    };
-  }, []);
-
   async function handleSync() {
     setIsSyncing(true);
     setFeedError('');
@@ -364,20 +314,6 @@ export function DashboardPage() {
       setFeedError(error instanceof Error ? error.message : 'Failed to summarize tweets.');
     } finally {
       setIsAiSummarizing(false);
-    }
-  }
-
-  async function handleRefreshMarketplace() {
-    setIsMarketplaceRefreshing(true);
-    setMarketplaceError('');
-    try {
-      const response = await fetchUpcomingMarketplaceMints({ days: 90, limit: 120 });
-      setMarketplaceMints(response.data);
-      setMarketplaceMeta(response.meta);
-    } catch (error) {
-      setMarketplaceError(error instanceof Error ? error.message : 'Failed to refresh NFT calendar.');
-    } finally {
-      setIsMarketplaceRefreshing(false);
     }
   }
 
@@ -638,94 +574,6 @@ export function DashboardPage() {
             <p className="text-sm text-slate-300">
               No upcoming manual mint found. Add mints in NFT Mint Tracker.
             </p>
-          )}
-        </GlassCard>
-
-        <GlassCard title="NFT Calendar" icon={<CalendarClock className="h-4 w-4" />} className="lg:col-span-8">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs text-slate-400">
-              All upcoming marketplace mints
-              {marketplaceMeta ? ` | Next ${marketplaceMeta.days} days` : ''}
-            </p>
-            <Button
-              type="button"
-              variant="ghost"
-              className="px-3"
-              onClick={() => void handleRefreshMarketplace()}
-              disabled={isMarketplaceRefreshing}
-            >
-              <RefreshCw className={`mr-2 h-4 w-4 ${isMarketplaceRefreshing ? 'animate-spin' : ''}`} />
-              {isMarketplaceRefreshing ? 'Refreshing...' : 'Refresh'}
-            </Button>
-          </div>
-
-          <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-300">
-            <span className="rounded-full border border-cyan-300/35 bg-cyan-300/10 px-2 py-0.5 text-cyan-200">
-              Magic Eden: {marketplaceMeta?.providers.magiceden.count ?? 0}
-            </span>
-            <span className="rounded-full border border-emerald-300/35 bg-emerald-300/10 px-2 py-0.5 text-emerald-200">
-              OpenSea: {marketplaceMeta?.providers.opensea.count ?? 0}
-            </span>
-            <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5">
-              Total: {marketplaceMints.length}
-            </span>
-          </div>
-
-          {marketplaceError ? (
-            <div className="mb-3 rounded-xl border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm text-rose-200">
-              {marketplaceError}
-            </div>
-          ) : null}
-
-          {isMarketplaceLoading ? (
-            <p className="text-sm text-slate-300">Loading NFT calendar...</p>
-          ) : marketplaceMints.length === 0 ? (
-            <p className="text-sm text-slate-300">No upcoming marketplace mints found.</p>
-          ) : (
-            <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
-              {marketplaceMints.map((mint) => (
-                <article key={mint.id} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5">
-                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span
-                        className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
-                          mint.source === 'magiceden'
-                            ? 'border-cyan-300/35 bg-cyan-300/10 text-cyan-200'
-                            : 'border-emerald-300/35 bg-emerald-300/10 text-emerald-200'
-                        }`}
-                      >
-                        {mint.sourceLabel}
-                      </span>
-                      <p className="truncate text-sm text-white">{mint.name}</p>
-                    </div>
-                    <p className="text-xs text-slate-400">{formatMarketplaceMintTime(mint.startsAt)}</p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                    <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5 uppercase tracking-wide">
-                      {mint.chain}
-                    </span>
-                    {mint.stageLabel ? (
-                      <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5 uppercase tracking-wide">
-                        {mint.stageLabel}
-                      </span>
-                    ) : null}
-                    <span className="text-cyan-200">{formatTimeUntil(mint.startsAt, nowTick)}</span>
-                    {mint.url ? (
-                      <a
-                        href={mint.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="ml-auto inline-flex items-center rounded-lg border border-slate-600 bg-panelAlt px-2.5 py-1 text-xs text-slate-100 transition hover:border-slate-500"
-                      >
-                        Open
-                        <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                      </a>
-                    ) : null}
-                  </div>
-                </article>
-              ))}
-            </div>
           )}
         </GlassCard>
 
@@ -1160,17 +1008,6 @@ function formatCountdownParts(value: string | number, nowMs: number) {
     [String(minutes).padStart(2, '0'), 'Mins'],
     [String(seconds).padStart(2, '0'), 'Secs']
   ] as const;
-}
-
-function formatMarketplaceMintTime(value: string) {
-  return `${new Date(value).toLocaleString('en-IN', {
-    timeZone: 'Asia/Kolkata',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true
-  })} IST`;
 }
 
 function resolveOperatorName(displayName: string | null, email: string | null) {

@@ -42,7 +42,10 @@ export type MarketplaceMintCalendarMeta = {
 
 export async function fetchUpcomingMarketplaceMints(params?: { limit?: number; days?: number }) {
   const query = new URLSearchParams();
-  if (params?.limit) query.set('limit', String(params.limit));
+  if (params?.limit) {
+    const safeLimit = Math.min(100, Math.max(1, Math.trunc(params.limit)));
+    query.set('limit', String(safeLimit));
+  }
   if (params?.days) query.set('days', String(params.days));
   const suffix = query.toString() ? `?${query.toString()}` : '';
 
@@ -54,4 +57,3 @@ export async function fetchUpcomingMarketplaceMints(params?: { limit?: number; d
 
   return response;
 }
-

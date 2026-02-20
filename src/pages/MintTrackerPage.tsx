@@ -161,7 +161,7 @@ export function MintTrackerPage() {
       setMarketplaceError('');
 
       try {
-        const response = await fetchUpcomingMarketplaceMints({ days: 90, limit: 250 });
+        const response = await fetchUpcomingMarketplaceMints({ days: 90, limit: 100 });
         if (!isMounted) return;
         setMarketplaceMints(response.data);
         setMarketplaceMeta(response.meta);
@@ -193,7 +193,7 @@ export function MintTrackerPage() {
     setIsMarketplaceRefreshing(true);
     setMarketplaceError('');
     try {
-      const response = await fetchUpcomingMarketplaceMints({ days: 90, limit: 250 });
+      const response = await fetchUpcomingMarketplaceMints({ days: 90, limit: 100 });
       setMarketplaceMints(response.data);
       setMarketplaceMeta(response.meta);
     } catch (error) {
