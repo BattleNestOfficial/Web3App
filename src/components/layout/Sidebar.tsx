@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { BarChart3, Bug, Clock3, Gauge, KanbanSquare, Layers, ListTodo, Settings, Sprout, X } from 'lucide-react';
+import { BarChart3, Bug, Clock3, Gauge, KanbanSquare, Layers, ListTodo, Settings, Sprout, Wallet, X } from 'lucide-react';
 import { useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '../../lib/cn';
@@ -8,9 +8,10 @@ const items = [
   { label: 'Overview', to: '/dashboard', icon: Gauge },
   { label: 'Analytics', to: '/analytics', icon: BarChart3 },
   { label: 'Mint Tracker', to: '/mints', icon: Clock3 },
-  { label: 'Farming Tracker', to: '/farming', icon: Sprout },
+  { label: 'Projects / Testnets', to: '/farming', icon: Sprout },
   { label: 'Productivity', to: '/productivity', icon: KanbanSquare },
   { label: 'To-Do', to: '/todo', icon: ListTodo },
+  { label: 'Wallet Tracker', to: '/wallet-tracker', icon: Wallet },
   { label: 'Bug Tracker', to: '/bugs', icon: Bug },
   { label: 'Projects', to: '/projects', icon: Layers },
   { label: 'Settings', to: '/settings', icon: Settings }
@@ -55,7 +56,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 border-r border-slate-800/70 bg-panel/95 backdrop-blur-xl md:block">
         <div className="flex h-full flex-col px-6 py-5">
           <div className="mb-8">
-            <p className="font-display text-lg font-semibold tracking-wide text-white">Neon Console</p>
+            <p className="font-display text-lg font-semibold tracking-wide text-white">Crimson Console</p>
             <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Mission Control</p>
           </div>
 
@@ -80,7 +81,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                       {isActive ? (
                         <motion.span
                           layoutId="desktop-nav-active-pill"
-                          className="absolute inset-0 -z-10 rounded-lg bg-gradient-to-r from-cyan-300/20 to-blue-400/20"
+                          className="absolute inset-0 -z-10 rounded-lg bg-gradient-to-r from-red-400/22 to-rose-500/22"
                           transition={{ type: 'spring', stiffness: 280, damping: 28 }}
                         />
                       ) : null}
@@ -118,7 +119,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               <div className="flex h-full flex-col px-6 py-5">
                 <div className="mb-8 flex items-center justify-between">
                   <div>
-                    <p className="font-display text-lg font-semibold tracking-wide text-white">Neon Console</p>
+                    <p className="font-display text-lg font-semibold tracking-wide text-white">Crimson Console</p>
                     <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Mission Control</p>
                   </div>
                   <button
@@ -152,7 +153,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                             {isActive ? (
                               <motion.span
                                 layoutId="mobile-nav-active-pill"
-                                className="absolute inset-0 -z-10 rounded-lg bg-gradient-to-r from-cyan-300/20 to-blue-400/20"
+                                className="absolute inset-0 -z-10 rounded-lg bg-gradient-to-r from-red-400/22 to-rose-500/22"
                                 transition={{ type: 'spring', stiffness: 280, damping: 28 }}
                               />
                             ) : null}

@@ -106,6 +106,60 @@ export async function initDb() {
   await pool.query(`CREATE INDEX IF NOT EXISTS alpha_tweets_keywords_idx ON alpha_tweets USING GIN (matched_keywords);`);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS wallet_trackers (
+      id SERIAL PRIMARY KEY,
+      wallet_address TEXT NOT NULL,
+      wallet_label TEXT,
+      platform TEXT NOT NULL DEFAULT 'opensea',
+      notify_buy BOOLEAN NOT NULL DEFAULT true,
+      notify_sell BOOLEAN NOT NULL DEFAULT true,
+      notify_mint BOOLEAN NOT NULL DEFAULT true,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      last_checked_at TIMESTAMPTZ,
+      last_event_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (wallet_address, platform)
+    );
+  `);
+
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS wallet_trackers_enabled_idx
+     ON wallet_trackers(enabled, updated_at DESC);`
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS wallet_activity_events (
+      id SERIAL PRIMARY KEY,
+      tracker_id INTEGER NOT NULL REFERENCES wallet_trackers(id) ON DELETE CASCADE,
+      event_id TEXT NOT NULL,
+      event_type TEXT NOT NULL CHECK (event_type IN ('buy', 'sell', 'mint', 'transfer')),
+      tx_hash TEXT,
+      token_contract TEXT,
+      token_id TEXT,
+      collection_slug TEXT,
+      currency_symbol TEXT,
+      price_value TEXT,
+      from_wallet TEXT,
+      to_wallet TEXT,
+      event_at TIMESTAMPTZ NOT NULL,
+      marketplace TEXT NOT NULL DEFAULT 'opensea',
+      payload JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (tracker_id, event_id)
+    );
+  `);
+
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS wallet_activity_events_tracker_idx
+     ON wallet_activity_events(tracker_id, event_at DESC);`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS wallet_activity_events_event_type_idx
+     ON wallet_activity_events(event_type, event_at DESC);`
+  );
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS automation_runs (
       id SERIAL PRIMARY KEY,
       workflow_key TEXT NOT NULL,

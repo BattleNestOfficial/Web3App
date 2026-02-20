@@ -5,15 +5,15 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        base: '#05050a',
-        panel: '#101427',
-        panelAlt: '#151a31',
-        glow: '#2df7cc',
-        accent: '#00a3ff',
-        danger: '#ff4f73'
+        base: '#050506',
+        panel: '#13090c',
+        panelAlt: '#1d0c11',
+        glow: '#ff2b4f',
+        accent: '#ff4d5a',
+        danger: '#ff6b7d'
       },
       boxShadow: {
-        glow: '0 0 40px rgba(45, 247, 204, 0.25)'
+        glow: '0 0 40px rgba(255, 43, 79, 0.28)'
       },
       borderRadius: {
         xl2: '1rem'
@@ -28,4 +28,3 @@ const config: Config = {
 };
 
 export default config;
-

@@ -21,13 +21,16 @@ function getPageMeta(pathname: string) {
   if (pathname.startsWith('/dashboard')) return { title: 'Operations Hub', subtitle: 'Realtime overview' };
   if (pathname.startsWith('/analytics')) return { title: 'Analytics Matrix', subtitle: 'Behavior + trend intelligence' };
   if (pathname.startsWith('/mints')) return { title: 'Mint Tracker', subtitle: 'Mints, reminders, countdowns' };
-  if (pathname.startsWith('/farming')) return { title: 'Farming Tracker', subtitle: 'Claims, rewards, project progress' };
+  if (pathname.startsWith('/farming'))
+    return { title: 'Projects / Testnets', subtitle: 'Track projects, testnets, tasks, and claim windows' };
   if (pathname.startsWith('/productivity')) return { title: 'Productivity', subtitle: 'Tasks and board execution flow' };
   if (pathname.startsWith('/todo')) return { title: 'To-Do', subtitle: 'Personal task execution center' };
+  if (pathname.startsWith('/wallet-tracker'))
+    return { title: 'Wallet Tracker', subtitle: 'Track OpenSea buy/sell/mint events with alerts' };
   if (pathname.startsWith('/bugs')) return { title: 'Bug Tracker', subtitle: 'Issue lifecycle and triage flow' };
   if (pathname.startsWith('/projects')) return { title: 'Projects', subtitle: 'Project-level workspace control' };
   if (pathname.startsWith('/settings')) return { title: 'Settings', subtitle: 'Configuration and account controls' };
-  return { title: 'Neon Console', subtitle: 'Mission control' };
+  return { title: 'Crimson Console', subtitle: 'Mission control' };
 }
 
 export function TopHeader({ leadingAction }: TopHeaderProps) {

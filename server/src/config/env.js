@@ -121,6 +121,18 @@ export const env = {
     openAiModel: getOptionalEnv('OPENAI_MODEL', 'gpt-4o-mini'),
     requestTimeoutMs: parseOptionalNumber('OPENAI_REQUEST_TIMEOUT_MS', 20000)
   },
+  walletTracker: {
+    enabled: parseOptionalBoolean('WALLET_TRACKER_ENABLED', true),
+    provider: getOptionalEnv('WALLET_TRACKER_PROVIDER', 'opensea'),
+    pollIntervalSeconds: parseOptionalNumber('WALLET_TRACKER_POLL_INTERVAL_SECONDS', 60),
+    lookbackMinutes: parseOptionalNumber('WALLET_TRACKER_LOOKBACK_MINUTES', 60),
+    maxEventsPerWallet: parseOptionalNumber('WALLET_TRACKER_MAX_EVENTS_PER_WALLET', 50),
+    requestTimeoutMs: parseOptionalNumber('WALLET_TRACKER_REQUEST_TIMEOUT_MS', 15000),
+    opensea: {
+      apiBaseUrl: getOptionalEnv('OPENSEA_API_BASE_URL', 'https://api.opensea.io/api/v2'),
+      apiKey: getOptionalEnv('OPENSEA_API_KEY')
+    }
+  },
   automation: {
     payPerUseEnabled: parseOptionalBoolean('AUTOMATION_PAY_PER_USE_ENABLED', false),
     currency: getOptionalEnv('AUTOMATION_CURRENCY', 'USD'),

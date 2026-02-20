@@ -182,7 +182,7 @@ export function FarmingTrackerPage() {
 
   async function handleDelete(id?: number) {
     if (!id) return;
-    if (!window.confirm('Delete this farming project?')) return;
+    if (!window.confirm('Delete this project/testnet entry?')) return;
     await removeProject(id);
     void runSync();
     if (editingId === id) {
@@ -213,8 +213,8 @@ export function FarmingTrackerPage() {
   return (
     <section className="mx-auto max-w-7xl">
       <header className="mb-6">
-        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Farming</p>
-        <h2 className="mt-1 font-display text-2xl text-white sm:text-3xl">Farming Tracker</h2>
+        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Projects / Testnets</p>
+        <h2 className="mt-1 font-display text-2xl text-white sm:text-3xl">Projects / Testnets</h2>
       </header>
 
       <div className="grid gap-4 lg:grid-cols-[1.05fr_1.6fr]">
@@ -281,7 +281,7 @@ export function FarmingTrackerPage() {
                       <label className="flex min-w-0 cursor-pointer items-center gap-2">
                         <input
                           type="checkbox"
-                          className="h-4 w-4 accent-cyan-300"
+                          className="h-4 w-4 accent-red-500"
                           checked={task.completed}
                           onChange={() => toggleFormTask(task.id)}
                         />
@@ -314,7 +314,7 @@ export function FarmingTrackerPage() {
                   initial={false}
                   animate={{ width: `${formProgress}%` }}
                   transition={{ duration: 0.25 }}
-                  className="h-full rounded-full bg-gradient-to-r from-cyan-300/90 to-emerald-300/90"
+                  className="h-full rounded-full bg-gradient-to-r from-red-500/90 to-rose-500/90"
                 />
               </div>
             </div>
@@ -360,7 +360,7 @@ export function FarmingTrackerPage() {
                 Pending sync: <span className="font-semibold text-white">{pendingSyncCount}</span>
               </p>
               <p className="text-sm text-slate-300">
-                Claim reminders: <span className="font-semibold text-white">{upcomingClaims.length}</span>
+                Upcoming claim windows: <span className="font-semibold text-white">{upcomingClaims.length}</span>
               </p>
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
@@ -402,13 +402,13 @@ export function FarmingTrackerPage() {
           <AnimatePresence mode="popLayout">
             {sortedProjects.length === 0 ? (
               <motion.article
-                key="empty-farming-list"
+                key="empty-projects-list"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
                 className="rounded-3xl border border-dashed border-slate-700/80 bg-panel/60 p-6 text-center"
               >
-                <p className="text-sm text-slate-300">No farming projects yet. Add one from the form.</p>
+                <p className="text-sm text-slate-300">No project/testnet entries yet. Add one from the form.</p>
               </motion.article>
             ) : (
               sortedProjects.map((project, index) => (
@@ -461,7 +461,7 @@ function ProjectCard({ project, now, index, onEdit, onDelete, onToggleTask }: Pr
           <h3 className="font-display text-lg text-white">{project.name}</h3>
           <p className="text-sm text-slate-300">{project.network}</p>
         </div>
-        <span className="rounded-full border border-cyan-300/40 bg-cyan-300/10 px-2.5 py-1 text-xs uppercase tracking-wide text-cyan-200">
+        <span className="rounded-full border border-red-300/40 bg-red-300/10 px-2.5 py-1 text-xs uppercase tracking-wide text-red-200">
           {project.progress}% complete
         </span>
       </div>
@@ -482,7 +482,7 @@ function ProjectCard({ project, now, index, onEdit, onDelete, onToggleTask }: Pr
             initial={false}
             animate={{ width: `${project.progress}%` }}
             transition={{ duration: 0.2 }}
-            className="h-full rounded-full bg-gradient-to-r from-cyan-300/90 to-emerald-300/90"
+            className="h-full rounded-full bg-gradient-to-r from-red-500/90 to-rose-500/90"
           />
         </div>
       </div>
@@ -516,7 +516,7 @@ function ProjectCard({ project, now, index, onEdit, onDelete, onToggleTask }: Pr
               <div className="flex min-w-0 items-center gap-2">
                 <input
                   type="checkbox"
-                  className="h-4 w-4 accent-cyan-300"
+                  className="h-4 w-4 accent-red-500"
                   checked={task.completed}
                   onChange={() => void onToggleTask(project, task.id)}
                 />

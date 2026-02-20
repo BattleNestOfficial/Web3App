@@ -11,6 +11,7 @@ import { ProductivityPage } from '../pages/ProductivityPage';
 import { ProjectsPage } from '../pages/ProjectsPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { TodoPage } from '../pages/TodoPage';
+import { WalletTrackerPage } from '../pages/WalletTrackerPage';
 import { ProtectedRoute } from './routes/ProtectedRoute';
 
 export const router = createBrowserRouter([
@@ -51,6 +52,10 @@ export const router = createBrowserRouter([
           {
             path: '/todo',
             element: <TodoPage />
+          },
+          {
+            path: '/wallet-tracker',
+            element: <WalletTrackerPage />
           },
           {
             path: '/journal',

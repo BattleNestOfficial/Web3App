@@ -81,7 +81,7 @@ export function AuthPage() {
         className="relative w-full max-w-md rounded-3xl border border-slate-700/60 bg-panel/90 p-7 shadow-2xl backdrop-blur-xl"
       >
         <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Secure Access</p>
-        <h1 className="mt-2 font-display text-2xl text-white">Neon Console</h1>
+        <h1 className="mt-2 font-display text-2xl text-white">Crimson Console</h1>
         <p className="mt-1 text-sm text-slate-400">Sign in with email/password or Google.</p>
 
         <div className="mt-6 grid grid-cols-2 gap-2 rounded-xl border border-slate-700 bg-panelAlt p-1">

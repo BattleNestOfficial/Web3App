@@ -14,7 +14,7 @@ export function AmbientBackground({ className, dense = false }: AmbientBackgroun
       <div className="ambient-grid absolute inset-0 opacity-55" />
 
       <motion.div
-        className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-cyan-300/18 blur-3xl"
+        className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-rose-400/20 blur-3xl"
         animate={
           reduceMotion
             ? undefined
@@ -28,7 +28,7 @@ export function AmbientBackground({ className, dense = false }: AmbientBackgroun
       />
 
       <motion.div
-        className="absolute right-0 top-0 h-80 w-80 rounded-full bg-blue-400/16 blur-3xl"
+        className="absolute right-0 top-0 h-80 w-80 rounded-full bg-red-500/16 blur-3xl"
         animate={
           reduceMotion
             ? undefined
@@ -42,7 +42,7 @@ export function AmbientBackground({ className, dense = false }: AmbientBackgroun
       />
 
       <motion.div
-        className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-emerald-300/12 blur-3xl"
+        className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-red-700/16 blur-3xl"
         animate={
           reduceMotion
             ? undefined

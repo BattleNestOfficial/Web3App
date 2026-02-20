@@ -6,11 +6,11 @@
 
 :root {
   color-scheme: dark;
-  --bg-0: #05050a;
-  --bg-1: #0b1022;
-  --bg-2: #0a1229;
-  --panel-glass: rgba(16, 20, 39, 0.8);
-  --line-soft: rgba(148, 163, 184, 0.14);
+  --bg-0: #060304;
+  --bg-1: #0d0508;
+  --bg-2: #14080d;
+  --panel-glass: rgba(24, 9, 14, 0.8);
+  --line-soft: rgba(248, 113, 113, 0.13);
 }
 
 * {
@@ -28,8 +28,8 @@ body {
   font-family: 'Manrope', sans-serif;
   background-color: var(--bg-0);
   background-image:
-    radial-gradient(80rem 35rem at 12% -10%, rgba(45, 247, 204, 0.1), transparent 60%),
-    radial-gradient(60rem 30rem at 95% -15%, rgba(0, 163, 255, 0.11), transparent 65%),
+    radial-gradient(80rem 35rem at 12% -10%, rgba(255, 43, 79, 0.15), transparent 60%),
+    radial-gradient(60rem 30rem at 95% -15%, rgba(190, 24, 93, 0.16), transparent 65%),
     linear-gradient(180deg, var(--bg-1), var(--bg-0) 45%, var(--bg-2));
   color: #f8fafc;
   text-rendering: geometricPrecision;
@@ -42,7 +42,7 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgba(45, 247, 204, 0.5), rgba(0, 163, 255, 0.5));
+  background: linear-gradient(180deg, rgba(255, 43, 79, 0.55), rgba(190, 24, 93, 0.55));
   border-radius: 999px;
 }
 
@@ -56,9 +56,9 @@ body {
 
 .glow-ring {
   box-shadow:
-    0 0 0 1px rgba(45, 247, 204, 0.35),
-    0 0 20px rgba(45, 247, 204, 0.22),
-    0 0 36px rgba(0, 163, 255, 0.14);
+    0 0 0 1px rgba(255, 43, 79, 0.35),
+    0 0 20px rgba(255, 43, 79, 0.24),
+    0 0 36px rgba(190, 24, 93, 0.15);
 }
 
 .glass-panel {
@@ -68,7 +68,7 @@ body {
 }
 
 .text-gradient {
-  background: linear-gradient(115deg, rgba(45, 247, 204, 0.95), rgba(0, 163, 255, 0.95));
+  background: linear-gradient(115deg, rgba(255, 77, 90, 0.98), rgba(244, 63, 94, 0.98));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
