@@ -1,7 +1,9 @@
 import {
   User,
+  browserLocalPersistence,
   createUserWithEmailAndPassword,
   onAuthStateChanged,
+  setPersistence,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut
@@ -30,11 +32,25 @@ export function AuthProvider({ children }: Props) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (nextUser) => {
-      setUser(nextUser);
-      setLoading(false);
-    });
-    return unsubscribe;
+    let mounted = true;
+    let unsubscribe = () => undefined;
+
+    (async () => {
+      try {
+        await setPersistence(auth, browserLocalPersistence);
+      } finally {
+        if (!mounted) return;
+        unsubscribe = onAuthStateChanged(auth, (nextUser) => {
+          setUser(nextUser);
+          setLoading(false);
+        });
+      }
+    })();
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
   }, []);
 
   const value = useMemo<AuthContextType>(
@@ -63,7 +79,7 @@ export function AuthProvider({ children }: Props) {
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) {
-    throw new Error('useAuth must be used within AuthProvider');
+    throw new Error('useAuth must be used inside AuthProvider');
   }
   return context;
 }

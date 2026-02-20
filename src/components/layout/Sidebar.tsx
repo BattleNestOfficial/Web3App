@@ -4,7 +4,7 @@ import { NavLink } from 'react-router-dom';
 import { cn } from '../../lib/cn';
 
 const items = [
-  { label: 'Overview', to: '/', icon: Gauge },
+  { label: 'Overview', to: '/dashboard', icon: Gauge },
   { label: 'Projects', to: '/projects', icon: Layers },
   { label: 'Settings', to: '/settings', icon: Settings }
 ];

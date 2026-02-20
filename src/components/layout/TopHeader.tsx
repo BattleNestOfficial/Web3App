@@ -10,10 +10,10 @@ type TopHeaderProps = {
 };
 
 function getInitials(nameOrEmail: string) {
-  const parts = nameOrEmail.split(/[\s@._-]+/).filter(Boolean);
-  if (parts.length === 0) return 'U';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
+  const tokens = nameOrEmail.split(/[\s@._-]+/).filter(Boolean);
+  if (tokens.length === 0) return 'U';
+  if (tokens.length === 1) return tokens[0].slice(0, 2).toUpperCase();
+  return (tokens[0][0] + tokens[1][0]).toUpperCase();
 }
 
 export function TopHeader({ leadingAction }: TopHeaderProps) {
@@ -29,7 +29,7 @@ export function TopHeader({ leadingAction }: TopHeaderProps) {
           {leadingAction}
           <div>
             <p className="font-display text-lg text-white">Operations Hub</p>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Live activity + auth</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Layout + routing baseline</p>
           </div>
         </div>
 
@@ -40,7 +40,7 @@ export function TopHeader({ leadingAction }: TopHeaderProps) {
             </Button>
           )}
 
-          <div className="hidden items-center gap-3 rounded-2xl border border-slate-700/70 bg-panel px-3 py-2 sm:flex">
+          <div className="flex items-center gap-3 rounded-2xl border border-slate-700/70 bg-panel px-3 py-2">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-glow/40 to-accent/40 text-xs font-semibold text-white">
               {getInitials(displayName)}
             </div>

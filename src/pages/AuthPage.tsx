@@ -2,76 +2,77 @@ import { FirebaseError } from 'firebase/app';
 import { motion } from 'framer-motion';
 import { Chrome } from 'lucide-react';
 import { FormEvent, useState } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../../app/providers/AuthProvider';
-import { Button } from '../../components/ui/Button';
-import { Input } from '../../components/ui/Input';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { useAuth } from '../app/providers/AuthProvider';
+import { Button } from '../components/ui/Button';
+import { Input } from '../components/ui/Input';
 
-type AuthMode = 'signin' | 'signup';
+type Mode = 'signin' | 'signup';
 
-function mapFirebaseError(error: unknown) {
-  if (!(error instanceof FirebaseError)) return 'Unable to authenticate right now.';
+function getErrorMessage(error: unknown) {
+  if (!(error instanceof FirebaseError)) {
+    return 'Authentication failed. Please try again.';
+  }
   if (error.code.includes('wrong-password') || error.code.includes('invalid-credential')) {
     return 'Invalid email or password.';
   }
   if (error.code.includes('email-already-in-use')) {
-    return 'Email is already registered.';
+    return 'Email is already in use.';
   }
   if (error.code.includes('popup-closed-by-user')) {
-    return 'Google sign-in popup was closed.';
+    return 'Google popup closed before completion.';
   }
   return error.message;
 }
 
 export function AuthPage() {
-  const [mode, setMode] = useState<AuthMode>('signin');
+  const [mode, setMode] = useState<Mode>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
   const [errorText, setErrorText] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const { user, signInEmail, signInGoogle, signUpEmail } = useAuth();
-  const location = useLocation();
+  const { user, signInEmail, signUpEmail, signInGoogle } = useAuth();
   const navigate = useNavigate();
 
   if (user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/dashboard" replace />;
   }
 
-  async function handleEmailAuth(event: FormEvent) {
+  async function submitEmailAuth(event: FormEvent) {
     event.preventDefault();
     setErrorText('');
-    setIsSubmitting(true);
+    setBusy(true);
     try {
       if (mode === 'signin') {
         await signInEmail(email, password);
       } else {
         await signUpEmail(email, password);
       }
-      const nextPath = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname || '/';
-      navigate(nextPath, { replace: true });
+      navigate('/dashboard', { replace: true });
     } catch (error) {
-      setErrorText(mapFirebaseError(error));
+      setErrorText(getErrorMessage(error));
     } finally {
-      setIsSubmitting(false);
+      setBusy(false);
     }
   }
 
-  async function handleGoogleAuth() {
+  async function submitGoogleAuth() {
     setErrorText('');
-    setIsSubmitting(true);
+    setBusy(true);
     try {
       await signInGoogle();
-      navigate('/', { replace: true });
+      navigate('/dashboard', { replace: true });
     } catch (error) {
-      setErrorText(mapFirebaseError(error));
+      setErrorText(getErrorMessage(error));
     } finally {
-      setIsSubmitting(false);
+      setBusy(false);
     }
   }
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-base p-6 text-slate-100">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(45,247,204,0.2),transparent_32%),radial-gradient(circle_at_80%_0%,rgba(0,163,255,0.2),transparent_24%)]" />
+
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -80,7 +81,7 @@ export function AuthPage() {
       >
         <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Secure Access</p>
         <h1 className="mt-2 font-display text-2xl text-white">Neon Console</h1>
-        <p className="mt-1 text-sm text-slate-400">Authenticate with Firebase and enter your control panel.</p>
+        <p className="mt-1 text-sm text-slate-400">Sign in with email/password or Google.</p>
 
         <div className="mt-6 grid grid-cols-2 gap-2 rounded-xl border border-slate-700 bg-panelAlt p-1">
           <button
@@ -103,13 +104,13 @@ export function AuthPage() {
           </button>
         </div>
 
-        <form className="mt-5 space-y-3" onSubmit={handleEmailAuth}>
+        <form className="mt-5 space-y-3" onSubmit={submitEmailAuth}>
           <Input
             type="email"
             placeholder="Email address"
             autoComplete="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(event) => setEmail(event.target.value)}
             required
           />
           <Input
@@ -117,15 +118,13 @@ export function AuthPage() {
             placeholder="Password"
             autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(event) => setPassword(event.target.value)}
             minLength={6}
             required
           />
-
-          {errorText && <p className="text-sm text-danger">{errorText}</p>}
-
-          <Button type="submit" className="w-full" disabled={isSubmitting}>
-            {isSubmitting ? 'Please wait...' : mode === 'signin' ? 'Sign In' : 'Create Account'}
+          {errorText ? <p className="text-sm text-danger">{errorText}</p> : null}
+          <Button type="submit" className="w-full" disabled={busy}>
+            {busy ? 'Please wait...' : mode === 'signin' ? 'Sign In' : 'Create Account'}
           </Button>
         </form>
 
@@ -135,7 +134,7 @@ export function AuthPage() {
           <div className="h-px flex-1 bg-slate-700" />
         </div>
 
-        <Button variant="secondary" className="w-full justify-center" onClick={handleGoogleAuth} disabled={isSubmitting}>
+        <Button variant="secondary" className="w-full justify-center" onClick={submitGoogleAuth} disabled={busy}>
           <Chrome className="mr-2 h-4 w-4" />
           Continue with Google
         </Button>
@@ -143,4 +142,3 @@ export function AuthPage() {
     </div>
   );
 }
-

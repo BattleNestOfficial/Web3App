@@ -1,9 +1,10 @@
 import { Navigate, createBrowserRouter } from 'react-router-dom';
 import { AppShell } from '../components/layout/AppShell';
-import { AuthPage } from '../features/auth/AuthPage';
-import { DashboardPage } from '../features/dashboard/pages/DashboardPage';
-import { ProjectsPage } from '../features/dashboard/pages/ProjectsPage';
-import { SettingsPage } from '../features/dashboard/pages/SettingsPage';
+import { AuthPage } from '../pages/AuthPage';
+import { DashboardPage } from '../pages/DashboardPage';
+import { NotFoundPage } from '../pages/NotFoundPage';
+import { ProjectsPage } from '../pages/ProjectsPage';
+import { SettingsPage } from '../pages/SettingsPage';
 import { ProtectedRoute } from './routes/ProtectedRoute';
 
 export const router = createBrowserRouter([
@@ -12,13 +13,17 @@ export const router = createBrowserRouter([
     element: <AuthPage />
   },
   {
+    path: '/',
+    element: <Navigate to="/dashboard" replace />
+  },
+  {
     element: <ProtectedRoute />,
     children: [
       {
         element: <AppShell />,
         children: [
           {
-            path: '/',
+            path: '/dashboard',
             element: <DashboardPage />
           },
           {
@@ -35,7 +40,6 @@ export const router = createBrowserRouter([
   },
   {
     path: '*',
-    element: <Navigate to="/" replace />
+    element: <NotFoundPage />
   }
 ]);
-
