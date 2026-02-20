@@ -1,11 +1,12 @@
 import { motion } from 'framer-motion';
-import { Clock3, Gauge, Layers, Settings, X } from 'lucide-react';
+import { Clock3, Gauge, Layers, Settings, Sprout, X } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '../../lib/cn';
 
 const items = [
   { label: 'Overview', to: '/dashboard', icon: Gauge },
   { label: 'Mint Tracker', to: '/mints', icon: Clock3 },
+  { label: 'Farming Tracker', to: '/farming', icon: Sprout },
   { label: 'Projects', to: '/projects', icon: Layers },
   { label: 'Settings', to: '/settings', icon: Settings }
 ];

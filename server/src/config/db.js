@@ -59,4 +59,27 @@ export async function initDb() {
 
   await pool.query(`CREATE INDEX IF NOT EXISTS notification_history_status_idx ON notification_history(status);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS notification_history_retry_idx ON notification_history(next_retry_at);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS farming_projects (
+      id SERIAL PRIMARY KEY,
+      client_id TEXT,
+      name TEXT NOT NULL,
+      network TEXT NOT NULL,
+      tasks JSONB NOT NULL DEFAULT '[]'::jsonb,
+      claim_date TIMESTAMPTZ,
+      reward_notes TEXT,
+      progress INTEGER NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`ALTER TABLE farming_projects ADD COLUMN IF NOT EXISTS client_id TEXT;`);
+  await pool.query(
+    `UPDATE farming_projects SET client_id = CONCAT('legacy-farm-', id) WHERE client_id IS NULL OR client_id = '';`
+  );
+  await pool.query(`ALTER TABLE farming_projects ALTER COLUMN client_id SET NOT NULL;`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS farming_projects_client_id_idx ON farming_projects(client_id);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS farming_projects_updated_at_idx ON farming_projects(updated_at);`);
 }
