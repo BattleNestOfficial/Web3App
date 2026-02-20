@@ -1,6 +1,9 @@
 import { motion } from 'framer-motion';
-import { CalendarClock, CheckCircle2, Clock3, Sparkles, TrendingUp } from 'lucide-react';
+import { AlertTriangle, CalendarClock, CheckCircle2, Clock3, ExternalLink, RefreshCw, Sparkles, TrendingUp } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import { fetchAlphaFeed, syncAlphaFeed, type AlphaFeedMeta, type AlphaTweet } from '../features/alphaFeed/api';
+import { Button } from '../components/ui/Button';
 
 const taskItems = [
   { label: 'Review mint allowlist', done: true },
@@ -17,6 +20,7 @@ const timelineItems = [
 ];
 
 const chartBars = [28, 40, 35, 48, 57, 52, 68, 62, 74, 71, 79, 84];
+const defaultKeywords = ['mint', 'testnet', 'airdrop'];
 
 const container = {
   hidden: { opacity: 0 },
@@ -63,6 +67,106 @@ function GlassCard({
 }
 
 export function DashboardPage() {
+  const [alphaTweets, setAlphaTweets] = useState<AlphaTweet[]>([]);
+  const [alphaMeta, setAlphaMeta] = useState<AlphaFeedMeta | null>(null);
+  const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
+  const [selectedKeywords, setSelectedKeywords] = useState<string[]>(defaultKeywords);
+  const [isFeedLoading, setIsFeedLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [feedError, setFeedError] = useState('');
+  const [syncMessage, setSyncMessage] = useState('');
+
+  const accountFilterKey = useMemo(() => selectedAccounts.join('|'), [selectedAccounts]);
+  const keywordFilterKey = useMemo(() => selectedKeywords.join('|'), [selectedKeywords]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function load() {
+      setIsFeedLoading(true);
+      setFeedError('');
+
+      try {
+        const response = await fetchAlphaFeed({
+          accounts: selectedAccounts,
+          keywords: selectedKeywords,
+          limit: 24
+        });
+
+        if (!isMounted) return;
+        setAlphaTweets(response.data);
+        setAlphaMeta(response.meta);
+
+        if (response.meta.sync?.warnings?.length) {
+          setSyncMessage(response.meta.sync.warnings.join(' '));
+        }
+      } catch (error) {
+        if (!isMounted) return;
+        setFeedError(error instanceof Error ? error.message : 'Failed to load alpha feed.');
+      } finally {
+        if (isMounted) {
+          setIsFeedLoading(false);
+        }
+      }
+    }
+
+    void load();
+    return () => {
+      isMounted = false;
+    };
+  }, [accountFilterKey, keywordFilterKey, selectedAccounts, selectedKeywords]);
+
+  async function handleSync() {
+    setIsSyncing(true);
+    setFeedError('');
+    setSyncMessage('');
+
+    try {
+      const response = await syncAlphaFeed({
+        accounts: selectedAccounts,
+        keywords: selectedKeywords,
+        limit: 24
+      });
+      setAlphaTweets(response.data);
+      setAlphaMeta(response.meta);
+
+      const sync = response.meta.sync;
+      if (sync) {
+        const parts = [`Fetched ${sync.fetchedCount}`, `Stored ${sync.storedCount}`];
+        if (sync.warnings.length > 0) parts.push(sync.warnings.join(' '));
+        if (sync.errors.length > 0) parts.push(sync.errors.join(' '));
+        setSyncMessage(parts.join(' | '));
+      }
+    } catch (error) {
+      setFeedError(error instanceof Error ? error.message : 'Failed to sync alpha feed.');
+    } finally {
+      setIsSyncing(false);
+    }
+  }
+
+  function toggleKeyword(keyword: string) {
+    setSelectedKeywords((prev) => {
+      const normalized = keyword.toLowerCase();
+      if (prev.some((item) => item.toLowerCase() === normalized)) {
+        return prev.filter((item) => item.toLowerCase() !== normalized);
+      }
+      return [...prev, keyword];
+    });
+  }
+
+  function toggleAccount(account: string) {
+    setSelectedAccounts((prev) => {
+      const normalized = account.toLowerCase();
+      if (prev.some((item) => item.toLowerCase() === normalized)) {
+        return prev.filter((item) => item.toLowerCase() !== normalized);
+      }
+      return [...prev, account];
+    });
+  }
+
+  const configuredAccounts = alphaMeta?.configuredAccounts ?? [];
+  const configuredKeywords = alphaMeta?.configuredKeywords?.length ? alphaMeta.configuredKeywords : defaultKeywords;
+
   return (
     <section className="mx-auto max-w-7xl">
       <motion.header
@@ -174,6 +278,127 @@ export function DashboardPage() {
               ))}
             </div>
           </div>
+        </GlassCard>
+
+        <GlassCard title="Alpha Feed" icon={<Clock3 className="h-4 w-4" />} className="lg:col-span-12">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs uppercase tracking-[0.12em] text-slate-400">Accounts</span>
+              <button
+                type="button"
+                onClick={() => setSelectedAccounts([])}
+                className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-wide ${
+                  selectedAccounts.length === 0
+                    ? 'border-glow/60 bg-glow/10 text-white'
+                    : 'border-slate-700 text-slate-300 hover:text-white'
+                }`}
+              >
+                All configured
+              </button>
+              {configuredAccounts.map((account) => {
+                const active = selectedAccounts.some((item) => item.toLowerCase() === account.toLowerCase());
+                return (
+                  <button
+                    key={account}
+                    type="button"
+                    onClick={() => toggleAccount(account)}
+                    className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-wide ${
+                      active
+                        ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200'
+                        : 'border-slate-700 text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    @{account}
+                  </button>
+                );
+              })}
+            </div>
+
+            <Button type="button" variant="ghost" className="px-3" onClick={() => void handleSync()} disabled={isSyncing}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+              {isSyncing ? 'Syncing...' : 'Sync now'}
+            </Button>
+          </div>
+
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="text-xs uppercase tracking-[0.12em] text-slate-400">Keywords</span>
+            {configuredKeywords.map((keyword) => {
+              const active = selectedKeywords.some((item) => item.toLowerCase() === keyword.toLowerCase());
+              return (
+                <button
+                  key={keyword}
+                  type="button"
+                  onClick={() => toggleKeyword(keyword)}
+                  className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-wide ${
+                    active
+                      ? 'border-emerald-300/40 bg-emerald-300/10 text-emerald-200'
+                      : 'border-slate-700 text-slate-300 hover:text-white'
+                  }`}
+                >
+                  {keyword}
+                </button>
+              );
+            })}
+          </div>
+
+          {syncMessage ? <p className="mb-2 text-xs text-cyan-200">{syncMessage}</p> : null}
+          {alphaMeta?.lastFetchedAt ? (
+            <p className="mb-2 text-xs text-slate-400">
+              Last fetched: {new Date(alphaMeta.lastFetchedAt).toLocaleString()} | Stored tweets: {alphaMeta.totalCount}
+            </p>
+          ) : null}
+
+          {feedError ? (
+            <div className="mb-2 flex items-center gap-2 rounded-xl border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm text-rose-200">
+              <AlertTriangle className="h-4 w-4" />
+              {feedError}
+            </div>
+          ) : null}
+
+          {isFeedLoading ? (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-5 text-sm text-slate-300">Loading alpha feed...</div>
+          ) : alphaTweets.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-700/80 bg-panel/60 px-3 py-5 text-sm text-slate-300">
+              No matching tweets found for current filters.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {alphaTweets.map((tweet, index) => (
+                <motion.article
+                  key={tweet.tweetId}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.18, delay: index * 0.02 }}
+                  className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"
+                >
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm text-white">@{tweet.authorUsername}</p>
+                    <p className="text-xs text-slate-400">{new Date(tweet.tweetedAt).toLocaleString()}</p>
+                  </div>
+                  <p className="mb-2 whitespace-pre-wrap break-words text-sm text-slate-200">{tweet.text}</p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {tweet.matchedKeywords.map((keyword) => (
+                      <span
+                        key={`${tweet.tweetId}-${keyword}`}
+                        className="rounded-full border border-cyan-300/40 bg-cyan-300/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-cyan-200"
+                      >
+                        {keyword}
+                      </span>
+                    ))}
+                    <a
+                      href={tweet.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="ml-auto inline-flex items-center rounded-lg border border-slate-600 bg-panelAlt px-2.5 py-1 text-xs text-slate-100 transition hover:border-slate-500"
+                    >
+                      Open
+                      <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                    </a>
+                  </div>
+                </motion.article>
+              ))}
+            </div>
+          )}
         </GlassCard>
       </motion.div>
     </section>

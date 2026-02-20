@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Clock3, Gauge, Layers, Settings, Sprout, X } from 'lucide-react';
+import { BookText, Bug, Clock3, Gauge, KanbanSquare, Layers, Settings, Sprout, X } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '../../lib/cn';
 
@@ -7,6 +7,9 @@ const items = [
   { label: 'Overview', to: '/dashboard', icon: Gauge },
   { label: 'Mint Tracker', to: '/mints', icon: Clock3 },
   { label: 'Farming Tracker', to: '/farming', icon: Sprout },
+  { label: 'Productivity', to: '/productivity', icon: KanbanSquare },
+  { label: 'Journal', to: '/journal', icon: BookText },
+  { label: 'Bug Tracker', to: '/bugs', icon: Bug },
   { label: 'Projects', to: '/projects', icon: Layers },
   { label: 'Settings', to: '/settings', icon: Settings }
 ];
