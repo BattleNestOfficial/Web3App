@@ -24,7 +24,12 @@ export async function verifyFirebaseJwt(req, _res, next) {
     if (error instanceof ApiError) {
       return next(error);
     }
+    // eslint-disable-next-line no-console
+    console.error('[auth] Firebase token verification failed:', {
+      name: error?.name,
+      code: error?.code,
+      message: error?.message
+    });
     return next(new ApiError(401, 'Unauthorized: invalid Firebase token.'));
   }
 }
-

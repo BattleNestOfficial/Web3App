@@ -184,6 +184,7 @@ async function fetchOpenSeaEvents(walletAddress) {
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), env.walletTracker.requestTimeoutMs);
+  const failures = [];
 
   try {
     for (const endpoint of endpoints) {
@@ -197,6 +198,16 @@ async function fetchOpenSeaEvents(walletAddress) {
       });
 
       if (!response.ok) {
+        let reason = `HTTP ${response.status}`;
+        try {
+          const bodyText = await response.text();
+          if (bodyText) {
+            reason = `${reason} - ${bodyText.slice(0, 240)}`;
+          }
+        } catch {
+          // Ignore body read failures.
+        }
+        failures.push({ endpoint, reason });
         continue;
       }
 
@@ -207,7 +218,13 @@ async function fetchOpenSeaEvents(walletAddress) {
         .filter((event) => event && SUPPORTED_EVENT_TYPES.includes(event.eventType));
     }
 
-    throw new Error('No supported OpenSea account events endpoint responded successfully.');
+    const detail = failures
+      .map((entry) => `${entry.endpoint} => ${entry.reason}`)
+      .join(' | ');
+    const keyHint = apiKey
+      ? ''
+      : ' OPENSEA_API_KEY is missing; OpenSea may reject or heavily rate-limit unauthenticated requests.';
+    throw new Error(`OpenSea account events request failed.${keyHint}${detail ? ` ${detail}` : ''}`);
   } finally {
     clearTimeout(timeout);
   }
