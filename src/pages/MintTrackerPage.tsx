@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { AnimatePresence, motion } from 'framer-motion';
-import { CalendarClock, ExternalLink, Pencil, Plus, Trash2 } from 'lucide-react';
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { CalendarClock, ExternalLink, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import {
@@ -9,6 +9,7 @@ import {
   type MintRecord,
   type ReminderOffsetMinutes,
   REMINDER_OPTIONS,
+  type MintSyncStatus,
   type MintVisibility,
   createMint,
   mintDB,
@@ -16,6 +17,7 @@ import {
   updateMint
 } from '../features/mints/db';
 import { syncNotificationEnginePlaceholder } from '../features/mints/notificationEngine';
+import { syncMintsWithBackend } from '../features/mints/sync';
 import { formatCountdown, formatMintDate, parseDateInput, toDateTimeLocalValue } from '../features/mints/time';
 import { useNow } from '../features/mints/useNow';
 
@@ -43,13 +45,25 @@ export function MintTrackerPage() {
   const [form, setForm] = useState<FormState>(defaultFormState);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('Waiting for first sync...');
   const [errorText, setErrorText] = useState('');
   const now = useNow(1000);
 
-  const mints = useLiveQuery(async () => mintDB.mints.orderBy('mintAt').toArray(), []);
+  const mints = useLiveQuery(
+    async () =>
+      (await mintDB.mints.toArray())
+        .filter((mint) => mint.deletedAt === null)
+        .sort((a, b) => a.mintAt - b.mintAt),
+    []
+  );
   const reminders = useLiveQuery(async () => mintDB.reminders.orderBy('remindAt').toArray(), []);
   const sortedMints = useMemo(() => mints ?? [], [mints]);
   const allReminders = useMemo(() => reminders ?? [], [reminders]);
+  const pendingSyncCount = useMemo(
+    () => sortedMints.filter((mint) => mint.syncStatus !== 'synced').length,
+    [sortedMints]
+  );
 
   const mintNameById = useMemo(() => {
     const map = new Map<number, string>();
@@ -94,10 +108,27 @@ export function MintTrackerPage() {
       }));
   }, [allReminders, mintNameById, now]);
 
+  const runSync = useCallback(async () => {
+    setIsSyncing(true);
+    const result = await syncMintsWithBackend();
+    setSyncMessage(result.message);
+    setIsSyncing(false);
+  }, []);
+
   useEffect(() => {
     const candidates = upcomingReminders.filter((entry) => entry.reminderId > 0);
     syncNotificationEnginePlaceholder(candidates);
   }, [upcomingReminders]);
+
+  useEffect(() => {
+    void runSync();
+    const onOnline = () => {
+      void runSync();
+    };
+
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [runSync]);
 
   function toggleReminderOffset(minutes: ReminderOffsetMinutes) {
     setForm((prev) => {
@@ -147,6 +178,8 @@ export function MintTrackerPage() {
         await updateMint(editingId, draft);
       }
 
+      void runSync();
+
       setForm(defaultFormState);
       setEditingId(null);
     } catch (error) {
@@ -180,6 +213,7 @@ export function MintTrackerPage() {
     if (!id) return;
     if (!window.confirm('Delete this mint entry?')) return;
     await removeMint(id);
+    void runSync();
     if (editingId === id) {
       setEditingId(null);
       setForm(defaultFormState);
@@ -317,8 +351,18 @@ export function MintTrackerPage() {
                 Total mints: <span className="font-semibold text-white">{sortedMints.length}</span>
               </p>
               <p className="text-sm text-slate-300">
+                Pending sync: <span className="font-semibold text-white">{pendingSyncCount}</span>
+              </p>
+              <p className="text-sm text-slate-300">
                 Upcoming reminders: <span className="font-semibold text-white">{upcomingReminders.length}</span>
               </p>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-slate-400">{syncMessage}</p>
+              <Button type="button" variant="ghost" className="px-3" onClick={() => void runSync()} disabled={isSyncing}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+                Sync now
+              </Button>
             </div>
           </div>
 
@@ -369,6 +413,7 @@ export function MintTrackerPage() {
                   index={index}
                   onEdit={startEdit}
                   onDelete={handleDelete}
+                  syncStatus={mint.syncStatus}
                   reminderOffsets={mint.id ? reminderOffsetsByMintId.get(mint.id) ?? [] : []}
                 />
               ))
@@ -386,10 +431,11 @@ type MintCardProps = {
   index: number;
   onEdit: (mint: MintRecord) => Promise<void>;
   onDelete: (id?: number) => Promise<void>;
+  syncStatus: MintSyncStatus;
   reminderOffsets: ReminderOffsetMinutes[];
 };
 
-function MintCard({ mint, now, index, onEdit, onDelete, reminderOffsets }: MintCardProps) {
+function MintCard({ mint, now, index, onEdit, onDelete, syncStatus, reminderOffsets }: MintCardProps) {
   const isLive = mint.mintAt <= now;
   const countdown = formatCountdown(mint.mintAt, now);
 
@@ -417,6 +463,12 @@ function MintCard({ mint, now, index, onEdit, onDelete, reminderOffsets }: MintC
           {mint.visibility === 'whitelist' ? 'Whitelist' : 'Public'}
         </span>
       </div>
+
+      {syncStatus !== 'synced' ? (
+        <div className="mb-3 inline-flex rounded-full border border-amber-300/40 bg-amber-300/10 px-2.5 py-1 text-[10px] uppercase tracking-wide text-amber-200">
+          {formatSyncStatus(syncStatus)}
+        </div>
+      ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
@@ -479,4 +531,11 @@ function formatOffsetLabel(minutes: ReminderOffsetMinutes) {
   if (minutes === 60) return '1h';
   if (minutes === 30) return '30m';
   return '10m';
+}
+
+function formatSyncStatus(status: MintSyncStatus) {
+  if (status === 'pending_create') return 'Pending create';
+  if (status === 'pending_update') return 'Pending update';
+  if (status === 'pending_delete') return 'Pending delete';
+  return 'Sync error';
 }

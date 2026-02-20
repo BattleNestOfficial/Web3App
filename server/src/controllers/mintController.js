@@ -1,4 +1,5 @@
 import { ApiError } from '../utils/ApiError.js';
+import crypto from 'node:crypto';
 import {
   createMint,
   deleteMint,
@@ -16,12 +17,14 @@ function parseMintId(value) {
 }
 
 function validateMintPayload(body) {
+  const clientIdRaw = typeof body.clientId === 'string' ? body.clientId.trim() : '';
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   const chain = typeof body.chain === 'string' ? body.chain.trim() : '';
   const mintDate = typeof body.mintDate === 'string' ? body.mintDate.trim() : '';
   const visibility = body.visibility;
   const link = typeof body.link === 'string' ? body.link.trim() : '';
   const notes = typeof body.notes === 'string' ? body.notes.trim() : '';
+  const reminderOffsetsRaw = Array.isArray(body.reminderOffsets) ? body.reminderOffsets : [];
 
   if (!name) throw new ApiError(400, 'Field "name" is required.');
   if (!chain) throw new ApiError(400, 'Field "chain" is required.');
@@ -35,7 +38,12 @@ function validateMintPayload(body) {
     throw new ApiError(400, 'Field "link" must start with http:// or https://');
   }
 
-  return { name, chain, mintDate, visibility, link, notes };
+  const reminderOffsets = Array.from(new Set(reminderOffsetsRaw.map((value) => Number(value)).filter(Number.isFinite)))
+    .filter((value) => value === 60 || value === 30 || value === 10)
+    .sort((a, b) => b - a);
+
+  const clientId = clientIdRaw || crypto.randomUUID();
+  return { clientId, name, chain, mintDate, visibility, link, notes, reminderOffsets };
 }
 
 export async function getMints(_req, res) {
@@ -76,4 +84,3 @@ export async function removeMintById(req, res) {
   }
   res.status(204).send();
 }
-
