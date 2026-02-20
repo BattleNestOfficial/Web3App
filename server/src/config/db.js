@@ -104,4 +104,102 @@ export async function initDb() {
   await pool.query(`CREATE INDEX IF NOT EXISTS alpha_tweets_tweeted_at_idx ON alpha_tweets(tweeted_at DESC);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS alpha_tweets_author_idx ON alpha_tweets(author_username);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS alpha_tweets_keywords_idx ON alpha_tweets USING GIN (matched_keywords);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS automation_runs (
+      id SERIAL PRIMARY KEY,
+      workflow_key TEXT NOT NULL,
+      run_key TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('started', 'sent', 'skipped', 'failed')),
+      details JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workflow_key, run_key)
+    );
+  `);
+
+  await pool.query(`CREATE INDEX IF NOT EXISTS automation_runs_workflow_idx ON automation_runs(workflow_key, created_at DESC);`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS automation_notification_history (
+      id SERIAL PRIMARY KEY,
+      workflow_key TEXT NOT NULL,
+      run_key TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK (channel IN ('web_push', 'brevo_email')),
+      status TEXT NOT NULL CHECK (status IN ('pending', 'retrying', 'sent', 'failed')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      payload JSONB,
+      next_retry_at TIMESTAMPTZ,
+      sent_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workflow_key, run_key, channel)
+    );
+  `);
+
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS automation_notification_retry_idx
+     ON automation_notification_history(status, next_retry_at);`
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS automation_billing_accounts (
+      id SERIAL PRIMARY KEY,
+      account_key TEXT NOT NULL UNIQUE,
+      currency TEXT NOT NULL DEFAULT 'USD',
+      balance_cents INTEGER NOT NULL DEFAULT 0 CHECK (balance_cents >= 0),
+      spent_cents INTEGER NOT NULL DEFAULT 0 CHECK (spent_cents >= 0),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_charged_at TIMESTAMPTZ
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS automation_billing_transactions (
+      id SERIAL PRIMARY KEY,
+      account_id INTEGER NOT NULL REFERENCES automation_billing_accounts(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('charge', 'refund', 'topup', 'adjustment')),
+      amount_cents INTEGER NOT NULL,
+      balance_after_cents INTEGER NOT NULL CHECK (balance_after_cents >= 0),
+      currency TEXT NOT NULL,
+      workflow_key TEXT,
+      run_key TEXT,
+      details JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS automation_billing_transactions_account_idx
+     ON automation_billing_transactions(account_id, created_at DESC);`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS automation_billing_transactions_workflow_idx
+     ON automation_billing_transactions(workflow_key, run_key);`
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS automation_usage_events (
+      id SERIAL PRIMARY KEY,
+      workflow_key TEXT NOT NULL,
+      run_key TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (
+        status IN ('free_disabled', 'blocked_insufficient_funds', 'charged', 'failed_reverted')
+      ),
+      price_cents INTEGER NOT NULL DEFAULT 0 CHECK (price_cents >= 0),
+      currency TEXT NOT NULL,
+      billing_transaction_id INTEGER REFERENCES automation_billing_transactions(id) ON DELETE SET NULL,
+      details JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (workflow_key, run_key)
+    );
+  `);
+
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS automation_usage_events_status_idx
+     ON automation_usage_events(status, created_at DESC);`
+  );
 }

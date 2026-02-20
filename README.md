@@ -43,3 +43,20 @@ src/
   lib/
   styles/
 ```
+
+## Automation Billing (Backend)
+
+Pay-per-use automation is now supported in the backend (`server/`):
+
+- Billing summary: `GET /api/automation/billing`
+- Manual top-up: `POST /api/automation/billing/top-up`
+
+Required backend envs are documented in `server/.env.example`:
+
+- `AUTOMATION_PAY_PER_USE_ENABLED`
+- `AUTOMATION_CURRENCY`
+- `AUTOMATION_DEFAULT_BALANCE_CENTS`
+- `AUTOMATION_PRICE_DAILY_BRIEFING_CENTS`
+- `AUTOMATION_PRICE_MISSED_TASK_ALERT_CENTS`
+- `AUTOMATION_PRICE_INACTIVE_FARMING_ALERT_CENTS`
+- `AUTOMATION_PRICE_WEEKLY_REPORT_CENTS`

@@ -37,6 +37,13 @@ function parseOptionalNumber(name, fallback) {
   return value;
 }
 
+function parseOptionalBoolean(name, fallback = false) {
+  const raw = getOptionalEnv(name, fallback ? 'true' : 'false').toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
+  if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+  throw new Error(`Environment variable ${name} must be a boolean.`);
+}
+
 function parseJsonArray(name, fallback = []) {
   const raw = getOptionalEnv(name, '');
   if (!raw) return fallback;
@@ -108,5 +115,26 @@ export const env = {
     keywords: parseCsv('TWITTER_KEYWORDS', ['mint', 'testnet', 'airdrop']),
     fetchLimit: parseOptionalNumber('TWITTER_FETCH_LIMIT', 25),
     requestTimeoutMs: parseOptionalNumber('TWITTER_REQUEST_TIMEOUT_MS', 15000)
+  },
+  ai: {
+    openAiApiKey: getOptionalEnv('OPENAI_API_KEY'),
+    openAiModel: getOptionalEnv('OPENAI_MODEL', 'gpt-4o-mini'),
+    requestTimeoutMs: parseOptionalNumber('OPENAI_REQUEST_TIMEOUT_MS', 20000)
+  },
+  automation: {
+    payPerUseEnabled: parseOptionalBoolean('AUTOMATION_PAY_PER_USE_ENABLED', false),
+    currency: getOptionalEnv('AUTOMATION_CURRENCY', 'USD'),
+    defaultBalanceCents: parseOptionalNumber('AUTOMATION_DEFAULT_BALANCE_CENTS', 0),
+    dailyBriefingHourUtc: parseOptionalNumber('AUTOMATION_DAILY_BRIEFING_HOUR_UTC', 8),
+    weeklyReportDayUtc: parseOptionalNumber('AUTOMATION_WEEKLY_REPORT_DAY_UTC', 1),
+    weeklyReportHourUtc: parseOptionalNumber('AUTOMATION_WEEKLY_REPORT_HOUR_UTC', 8),
+    inactiveFarmingDays: parseOptionalNumber('AUTOMATION_INACTIVE_FARMING_DAYS', 3),
+    missedTaskLookbackHours: parseOptionalNumber('AUTOMATION_MISSED_TASK_LOOKBACK_HOURS', 24),
+    pricing: {
+      dailyBriefingCents: parseOptionalNumber('AUTOMATION_PRICE_DAILY_BRIEFING_CENTS', 100),
+      missedTaskAlertCents: parseOptionalNumber('AUTOMATION_PRICE_MISSED_TASK_ALERT_CENTS', 60),
+      inactiveFarmingAlertCents: parseOptionalNumber('AUTOMATION_PRICE_INACTIVE_FARMING_ALERT_CENTS', 60),
+      weeklyReportCents: parseOptionalNumber('AUTOMATION_PRICE_WEEKLY_REPORT_CENTS', 180)
+    }
   }
 };

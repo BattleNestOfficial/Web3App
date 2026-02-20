@@ -1,5 +1,6 @@
 import { Navigate, createBrowserRouter } from 'react-router-dom';
 import { AppShell } from '../components/layout/AppShell';
+import { AnalyticsPage } from '../pages/AnalyticsPage';
 import { AuthPage } from '../pages/AuthPage';
 import { BugTrackerPage } from '../pages/BugTrackerPage';
 import { DashboardPage } from '../pages/DashboardPage';
@@ -30,6 +31,10 @@ export const router = createBrowserRouter([
           {
             path: '/dashboard',
             element: <DashboardPage />
+          },
+          {
+            path: '/analytics',
+            element: <AnalyticsPage />
           },
           {
             path: '/mints',

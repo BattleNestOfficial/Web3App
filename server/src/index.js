@@ -1,12 +1,14 @@
 import { app } from './app.js';
 import { pool, initDb } from './config/db.js';
 import { env } from './config/env.js';
+import { startAutomationCron } from './jobs/automationCron.js';
 import { startReminderCron } from './jobs/reminderCron.js';
 
 async function start() {
   try {
     await initDb();
     const stopReminderCron = startReminderCron();
+    const stopAutomationCron = startAutomationCron();
 
     const server = app.listen(env.port, () => {
       // eslint-disable-next-line no-console
@@ -15,6 +17,7 @@ async function start() {
 
     const shutdown = async () => {
       stopReminderCron();
+      stopAutomationCron();
       server.close(async () => {
         await pool.end();
         process.exit(0);
