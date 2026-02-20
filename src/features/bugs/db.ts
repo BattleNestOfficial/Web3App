@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+import { recordAppActivity } from '../activity/log';
 
 export type BugStatus = 'open' | 'review' | 'closed' | 'resolved';
 export type BugPriority = 'low' | 'medium' | 'high' | 'critical';
@@ -80,6 +81,7 @@ function normalizeScreenshots(images: string[]) {
 
 export async function createBug(draft: BugDraft) {
   const now = Date.now();
+  const title = draft.title.trim() || 'Untitled bug';
   const notes: BugNote[] = [];
   const history: BugHistoryEntry[] = [createHistory('created', 'Bug created.', now)];
 
@@ -99,7 +101,7 @@ export async function createBug(draft: BugDraft) {
   }
 
   await bugDB.bugs.add({
-    title: draft.title.trim(),
+    title,
     priority: draft.priority,
     status: draft.status,
     notes,
@@ -107,6 +109,14 @@ export async function createBug(draft: BugDraft) {
     history,
     createdAt: now,
     updatedAt: now
+  });
+
+  await recordAppActivity({
+    source: 'bug_tracker',
+    action: 'create_bug',
+    title: 'Bug report added',
+    detail: `${title} | ${draft.priority} | ${draft.status}`,
+    happenedAt: now
   });
 }
 
@@ -155,6 +165,14 @@ export async function updateBug(id: number, draft: BugDraft) {
     history,
     updatedAt: now
   });
+
+  await recordAppActivity({
+    source: 'bug_tracker',
+    action: 'update_bug',
+    title: 'Bug report updated',
+    detail: `${title || existing.title} | ${draft.priority} | ${draft.status}`,
+    happenedAt: now
+  });
 }
 
 export async function setBugStatus(id: number, status: BugStatus) {
@@ -166,6 +184,14 @@ export async function setBugStatus(id: number, status: BugStatus) {
     status,
     history: [...existing.history, createHistory('status', `Status moved from ${existing.status} to ${status}.`, now)],
     updatedAt: now
+  });
+
+  await recordAppActivity({
+    source: 'bug_tracker',
+    action: 'set_bug_status',
+    title: 'Bug status changed',
+    detail: `${existing.title} | ${existing.status} -> ${status}`,
+    happenedAt: now
   });
 }
 
@@ -179,4 +205,11 @@ export async function deleteBug(id: number) {
     updatedAt: now
   });
   await bugDB.bugs.delete(id);
+  await recordAppActivity({
+    source: 'bug_tracker',
+    action: 'delete_bug',
+    title: 'Bug report deleted',
+    detail: existing.title,
+    happenedAt: now
+  });
 }

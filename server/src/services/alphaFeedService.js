@@ -1,5 +1,6 @@
 import { env } from '../config/env.js';
 import { pool } from '../config/db.js';
+import { recordApiUsageSafely } from './apiCostService.js';
 
 const TWITTER_API_BASE_URL = 'https://api.twitter.com/2';
 const DEFAULT_KEYWORDS = ['mint', 'testnet', 'airdrop'];
@@ -56,14 +57,32 @@ async function twitterRequest(path) {
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), env.twitter.requestTimeoutMs);
+  const endpoint = `${TWITTER_API_BASE_URL}${path}`;
+  const startedAt = Date.now();
+  let logged = false;
 
   try {
-    const response = await fetch(`${TWITTER_API_BASE_URL}${path}`, {
+    const response = await fetch(endpoint, {
       headers: {
         Authorization: `Bearer ${token}`
       },
       signal: controller.signal
     });
+
+    void recordApiUsageSafely({
+      providerKey: 'twitter',
+      operation: 'fetch_tweets',
+      endpoint,
+      requestCount: 1,
+      statusCode: response.status,
+      success: response.ok,
+      metadata: {
+        service: 'alpha_feed',
+        path,
+        durationMs: Date.now() - startedAt
+      }
+    });
+    logged = true;
 
     if (!response.ok) {
       const body = await response.text();
@@ -71,6 +90,24 @@ async function twitterRequest(path) {
     }
 
     return response.json();
+  } catch (error) {
+    if (logged) {
+      throw error;
+    }
+    void recordApiUsageSafely({
+      providerKey: 'twitter',
+      operation: 'fetch_tweets',
+      endpoint,
+      requestCount: 1,
+      success: false,
+      metadata: {
+        service: 'alpha_feed',
+        path,
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    });
+    throw error;
   } finally {
     clearTimeout(timeout);
   }

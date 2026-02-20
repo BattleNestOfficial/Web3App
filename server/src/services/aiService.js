@@ -1,5 +1,6 @@
 import { env } from '../config/env.js';
 import { pool } from '../config/db.js';
+import { recordApiUsageSafely } from './apiCostService.js';
 
 const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
 
@@ -61,6 +62,8 @@ async function callOpenAiJson({ systemPrompt, userPrompt }) {
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), env.ai.requestTimeoutMs);
+  const startedAt = Date.now();
+  let logged = false;
 
   try {
     const response = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
@@ -83,16 +86,63 @@ async function callOpenAiJson({ systemPrompt, userPrompt }) {
 
     if (!response.ok) {
       const body = await response.text();
+      void recordApiUsageSafely({
+        providerKey: 'openai',
+        operation: 'chat_completions',
+        endpoint: OPENAI_CHAT_COMPLETIONS_URL,
+        requestCount: 1,
+        statusCode: response.status,
+        success: false,
+        metadata: {
+          model: env.ai.openAiModel,
+          durationMs: Date.now() - startedAt
+        }
+      });
+      logged = true;
       throw new Error(`OpenAI request failed (${response.status}): ${body || 'unknown error'}`);
     }
 
     const payload = await response.json();
+    const promptTokens = Number(payload?.usage?.prompt_tokens ?? 0) || 0;
+    const completionTokens = Number(payload?.usage?.completion_tokens ?? 0) || 0;
+    void recordApiUsageSafely({
+      providerKey: 'openai',
+      operation: 'chat_completions',
+      endpoint: OPENAI_CHAT_COMPLETIONS_URL,
+      requestCount: 1,
+      inputTokens: Math.max(0, Math.floor(promptTokens)),
+      outputTokens: Math.max(0, Math.floor(completionTokens)),
+      statusCode: response.status,
+      success: true,
+      metadata: {
+        model: env.ai.openAiModel,
+        durationMs: Date.now() - startedAt
+      }
+    });
+    logged = true;
     const content = payload?.choices?.[0]?.message?.content;
     const parsed = parseJsonObject(content);
     if (!parsed || typeof parsed !== 'object') {
       throw new Error('OpenAI returned non-JSON content.');
     }
     return parsed;
+  } catch (error) {
+    if (logged) {
+      throw error;
+    }
+    void recordApiUsageSafely({
+      providerKey: 'openai',
+      operation: 'chat_completions',
+      endpoint: OPENAI_CHAT_COMPLETIONS_URL,
+      requestCount: 1,
+      success: false,
+      metadata: {
+        model: env.ai.openAiModel,
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    });
+    throw error;
   } finally {
     clearTimeout(timeout);
   }

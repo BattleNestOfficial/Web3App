@@ -124,7 +124,11 @@ export async function apiRequest<T>(path: string, init?: RequestInit, options?: 
       }
 
       if (attempt >= retries) {
-        throw new ApiRequestError('Network error while contacting backend.', 0, requestId);
+        throw new ApiRequestError(
+          `Network error while contacting backend (${API_BASE_URL}). Check VITE_API_BASE_URL and backend availability.`,
+          0,
+          requestId
+        );
       }
 
       attempt += 1;

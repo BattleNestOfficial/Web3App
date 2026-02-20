@@ -256,4 +256,35 @@ export async function initDb() {
     `CREATE INDEX IF NOT EXISTS automation_usage_events_status_idx
      ON automation_usage_events(status, created_at DESC);`
   );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS api_usage_events (
+      id SERIAL PRIMARY KEY,
+      provider_key TEXT NOT NULL,
+      operation TEXT NOT NULL DEFAULT 'request',
+      endpoint TEXT,
+      request_count INTEGER NOT NULL DEFAULT 1 CHECK (request_count >= 0),
+      input_tokens INTEGER NOT NULL DEFAULT 0 CHECK (input_tokens >= 0),
+      output_tokens INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
+      cost_usd NUMERIC(18, 8) NOT NULL DEFAULT 0 CHECK (cost_usd >= 0),
+      currency TEXT NOT NULL DEFAULT 'USD',
+      success BOOLEAN NOT NULL DEFAULT true,
+      http_status INTEGER,
+      metadata JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS api_usage_events_created_at_idx
+     ON api_usage_events(created_at DESC);`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS api_usage_events_provider_idx
+     ON api_usage_events(provider_key, created_at DESC);`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS api_usage_events_success_idx
+     ON api_usage_events(success, created_at DESC);`
+  );
 }

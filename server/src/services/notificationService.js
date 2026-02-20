@@ -1,6 +1,7 @@
 import webpush from 'web-push';
 import { pool } from '../config/db.js';
 import { env } from '../config/env.js';
+import { recordApiUsageSafely } from './apiCostService.js';
 
 const CHANNEL_WEB_PUSH = 'web_push';
 const CHANNEL_BREVO_EMAIL = 'brevo_email';
@@ -290,18 +291,54 @@ async function sendBrevoEmailPayload(emailPayload) {
     throw new Error('Global fetch is unavailable. Use Node.js 18+ or provide a fetch polyfill.');
   }
 
-  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'api-key': config.apiKey
-    },
-    body: JSON.stringify(emailPayload)
-  });
+  const endpoint = 'https://api.brevo.com/v3/smtp/email';
+  const startedAt = Date.now();
+  let logged = false;
 
-  if (!response.ok) {
-    const bodyText = await response.text();
-    throw new Error(`Brevo request failed (${response.status}): ${bodyText}`);
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'api-key': config.apiKey
+      },
+      body: JSON.stringify(emailPayload)
+    });
+
+    void recordApiUsageSafely({
+      providerKey: 'brevo',
+      operation: 'send_email',
+      endpoint,
+      requestCount: 1,
+      statusCode: response.status,
+      success: response.ok,
+      metadata: {
+        service: 'notification',
+        durationMs: Date.now() - startedAt
+      }
+    });
+    logged = true;
+
+    if (!response.ok) {
+      const bodyText = await response.text();
+      throw new Error(`Brevo request failed (${response.status}): ${bodyText}`);
+    }
+  } catch (error) {
+    if (!logged) {
+      void recordApiUsageSafely({
+        providerKey: 'brevo',
+        operation: 'send_email',
+        endpoint,
+        requestCount: 1,
+        success: false,
+        metadata: {
+          service: 'notification',
+          durationMs: Date.now() - startedAt,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      });
+    }
+    throw error;
   }
 }
 

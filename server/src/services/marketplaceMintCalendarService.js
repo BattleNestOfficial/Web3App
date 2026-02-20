@@ -1,4 +1,5 @@
 import { env } from '../config/env.js';
+import { recordApiUsageSafely } from './apiCostService.js';
 
 const OPEN_SEA_UPCOMING_DROPS_URL = 'https://opensea.io/drops/upcoming';
 const OPEN_SEA_API_BASE_URL = 'https://api.opensea.io/api/v2';
@@ -175,16 +176,31 @@ function mapOpenSeaDrop(drop, nowMs) {
 async function fetchMagicEdenUpcomingMints({ limit, fromMs, toMs }) {
   const apiBase = env.walletTracker.magiceden.apiBaseUrl.replace(/\/+$/, '');
   const apiKey = env.walletTracker.magiceden.apiKey;
+  const endpoint = `${apiBase}/v2/launchpad/collections`;
   const query = new URLSearchParams({
     offset: '0',
     limit: String(Math.max(20, Math.min(200, limit * 4)))
   });
 
-  const response = await fetch(`${apiBase}/v2/launchpad/collections?${query.toString()}`, {
+  const startedAt = Date.now();
+  const response = await fetch(`${endpoint}?${query.toString()}`, {
     method: 'GET',
     headers: {
       Accept: 'application/json',
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+    }
+  });
+
+  void recordApiUsageSafely({
+    providerKey: 'magiceden',
+    operation: 'marketplace_upcoming_mints',
+    endpoint,
+    requestCount: 1,
+    statusCode: response.status,
+    success: response.ok,
+    metadata: {
+      service: 'marketplace_mint_calendar',
+      durationMs: Date.now() - startedAt
     }
   });
 
@@ -213,11 +229,25 @@ async function fetchOpenSeaUpcomingMints({ limit, fromMs, toMs }) {
     return fromApi;
   }
 
+  const startedAt = Date.now();
   const response = await fetch(OPEN_SEA_UPCOMING_DROPS_URL, {
     method: 'GET',
     headers: {
       Accept: 'text/html',
       'User-Agent': 'Mozilla/5.0 (compatible; MintCalendarBot/1.0)'
+    }
+  });
+
+  void recordApiUsageSafely({
+    providerKey: 'opensea',
+    operation: 'marketplace_upcoming_mints_html_fallback',
+    endpoint: OPEN_SEA_UPCOMING_DROPS_URL,
+    requestCount: 1,
+    statusCode: response.status,
+    success: response.ok,
+    metadata: {
+      service: 'marketplace_mint_calendar',
+      durationMs: Date.now() - startedAt
     }
   });
 
@@ -298,11 +328,25 @@ async function fetchOpenSeaUpcomingMintsFromApi({ limit, fromMs, toMs }) {
   ];
 
   for (const endpoint of endpoints) {
+    const startedAt = Date.now();
     const response = await fetch(endpoint, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
         ...(apiKey ? { 'x-api-key': apiKey } : {})
+      }
+    });
+
+    void recordApiUsageSafely({
+      providerKey: 'opensea',
+      operation: 'marketplace_upcoming_mints_api',
+      endpoint,
+      requestCount: 1,
+      statusCode: response.status,
+      success: response.ok,
+      metadata: {
+        service: 'marketplace_mint_calendar',
+        durationMs: Date.now() - startedAt
       }
     });
 

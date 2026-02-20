@@ -1,4 +1,5 @@
 import { apiRequest } from '../../lib/apiClient';
+import { recordAppActivity } from '../activity/log';
 
 type ApiResponse<T> = {
   data: T;
@@ -64,6 +65,12 @@ export async function createWalletTracker(payload: WalletTrackerPayload) {
     },
     { retries: 1 }
   );
+  await recordAppActivity({
+    source: 'wallet_tracker',
+    action: 'create_tracker',
+    title: 'Wallet tracker added',
+    detail: response.data.wallet_label || response.data.wallet_address
+  });
   return response.data;
 }
 
@@ -76,11 +83,23 @@ export async function updateWalletTracker(id: number, payload: WalletTrackerPayl
     },
     { retries: 1 }
   );
+  await recordAppActivity({
+    source: 'wallet_tracker',
+    action: 'update_tracker',
+    title: 'Wallet tracker updated',
+    detail: response.data.wallet_label || response.data.wallet_address
+  });
   return response.data;
 }
 
 export async function deleteWalletTracker(id: number) {
   await apiRequest<void>(`/wallet-trackers/${id}`, { method: 'DELETE' }, { retries: 1 });
+  await recordAppActivity({
+    source: 'wallet_tracker',
+    action: 'delete_tracker',
+    title: 'Wallet tracker deleted',
+    detail: `Tracker #${id}`
+  });
 }
 
 export async function fetchWalletActivityEvents(params?: { trackerId?: number; limit?: number }) {
@@ -106,5 +125,11 @@ export async function syncWalletTrackers(trackerId?: number) {
     },
     { retries: 0 }
   );
+  await recordAppActivity({
+    source: 'wallet_tracker',
+    action: 'manual_sync',
+    title: 'Wallet tracker sync triggered',
+    detail: trackerId ? `Tracker #${trackerId}` : 'All trackers'
+  });
   return response.data;
 }

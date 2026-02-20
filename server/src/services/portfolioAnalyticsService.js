@@ -1,5 +1,6 @@
 import { pool } from '../config/db.js';
 import { env } from '../config/env.js';
+import { recordApiUsageSafely } from './apiCostService.js';
 
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
@@ -70,11 +71,27 @@ async function fetchLiveCollectionPrice({ chain, collectionId }) {
     query.set('limit', String(limit));
     query.append('activityTypes[]', activityType);
 
-    const response = await fetch(`${baseUrl}/v4/evm-public/activities?${query.toString()}`, {
+    const endpoint = `${baseUrl}/v4/evm-public/activities`;
+    const startedAt = Date.now();
+    const response = await fetch(`${endpoint}?${query.toString()}`, {
       method: 'GET',
       headers: {
         Accept: 'application/json',
         ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+      }
+    });
+
+    void recordApiUsageSafely({
+      providerKey: 'magiceden',
+      operation: 'portfolio_live_price',
+      endpoint,
+      requestCount: 1,
+      statusCode: response.status,
+      success: response.ok,
+      metadata: {
+        service: 'portfolio_analytics',
+        activityType,
+        durationMs: Date.now() - startedAt
       }
     });
 

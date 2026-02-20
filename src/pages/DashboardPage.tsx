@@ -16,6 +16,11 @@ import type { ReactNode } from 'react';
 import { useAuth } from '../app/providers/AuthProvider';
 import { fetchAlphaFeed, syncAlphaFeed, type AlphaFeedMeta, type AlphaTweet } from '../features/alphaFeed/api';
 import {
+  fetchUpcomingMarketplaceMints,
+  type MarketplaceMintCalendarMeta,
+  type MarketplaceMintItem
+} from '../features/marketplaceMints/api';
+import {
   extractMintDetailsWithAi,
   fetchDailyProductivitySummaryWithAi,
   generateFarmingTasksWithAi,
@@ -25,14 +30,11 @@ import {
   type MintExtractionResult,
   type TweetSummaryResult
 } from '../features/ai/api';
-import {
-  fetchUpcomingMarketplaceMints,
-  type MarketplaceMintItem
-} from '../features/marketplaceMints/api';
+import { listRecentAppActivityEvents } from '../features/activity/log';
 import { buildTrackedActivityEntries, type TrackedActivityEntry } from '../features/activity/stream';
 import { mintDB } from '../features/mints/db';
 import { todoDB, toggleTodoTask, type TodoTaskRecord } from '../features/todo/db';
-import { fetchWalletActivityEvents } from '../features/walletTracker/api';
+import { fetchWalletActivityEvents, type WalletActivityEvent } from '../features/walletTracker/api';
 import { Button } from '../components/ui/Button';
 
 const defaultKeywords = ['mint', 'testnet', 'airdrop'];
@@ -68,6 +70,20 @@ type CompanionAgendaItem = {
   at: number | null;
   taskId?: number;
   taskDone?: boolean;
+};
+
+type JarvisTimeWindowKey = 'morning' | 'afternoon' | 'evening' | 'night' | 'anytime';
+
+type JarvisTimeBucket = {
+  key: JarvisTimeWindowKey;
+  label: string;
+  items: CompanionAgendaItem[];
+};
+
+type JarvisBriefing = {
+  greeting: string;
+  summary: string;
+  nextAction: string;
 };
 
 function GlassCard({
@@ -114,22 +130,31 @@ export function DashboardPage() {
   const [isAiGeneratingTasks, setIsAiGeneratingTasks] = useState(false);
   const [isAiLoadingDailySummary, setIsAiLoadingDailySummary] = useState(false);
   const [extractingTweetId, setExtractingTweetId] = useState<string | null>(null);
-  const [calendarItems, setCalendarItems] = useState<MarketplaceMintItem[]>([]);
-  const [isCalendarLoading, setIsCalendarLoading] = useState(true);
-  const [activityTimeline, setActivityTimeline] = useState<TrackedActivityEntry[]>([]);
+  const [walletTimelineEvents, setWalletTimelineEvents] = useState<WalletActivityEvent[]>([]);
   const [isActivityLoading, setIsActivityLoading] = useState(true);
   const [activityError, setActivityError] = useState('');
   const [companionError, setCompanionError] = useState('');
   const [updatingTaskId, setUpdatingTaskId] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
+  const [marketplaceMints, setMarketplaceMints] = useState<MarketplaceMintItem[]>([]);
+  const [marketplaceMeta, setMarketplaceMeta] = useState<MarketplaceMintCalendarMeta | null>(null);
+  const [isMarketplaceLoading, setIsMarketplaceLoading] = useState(true);
+  const [isMarketplaceRefreshing, setIsMarketplaceRefreshing] = useState(false);
+  const [marketplaceError, setMarketplaceError] = useState('');
   const todoTasks = useLiveQuery(async () => todoDB.tasks.toArray(), []);
   const mintRows = useLiveQuery(
     async () => (await mintDB.mints.toArray()).filter((mint) => mint.deletedAt === null),
     []
   );
   const reminderRows = useLiveQuery(async () => mintDB.reminders.toArray(), []);
+  const appActivityRows = useLiveQuery(async () => listRecentAppActivityEvents(240), []);
   const localMints = useMemo(() => mintRows ?? [], [mintRows]);
   const localReminders = useMemo(() => reminderRows ?? [], [reminderRows]);
+  const appActivityEvents = useMemo(() => appActivityRows ?? [], [appActivityRows]);
+  const activityTimeline = useMemo(
+    () => buildTrackedActivityEntries(walletTimelineEvents, localMints, appActivityEvents, 12),
+    [appActivityEvents, localMints, walletTimelineEvents]
+  );
 
   const accountFilterKey = useMemo(() => selectedAccounts.join('|'), [selectedAccounts]);
   const keywordFilterKey = useMemo(() => selectedKeywords.join('|'), [selectedKeywords]);
@@ -137,37 +162,49 @@ export function DashboardPage() {
   useEffect(() => {
     let isMounted = true;
 
-    async function load() {
-      setIsFeedLoading(true);
+    async function loadFeed(options: { showLoader: boolean; refresh: boolean }) {
+      if (options.showLoader) {
+        setIsFeedLoading(true);
+      }
       setFeedError('');
 
       try {
         const response = await fetchAlphaFeed({
           accounts: selectedAccounts,
           keywords: selectedKeywords,
-          limit: 24
+          limit: 24,
+          refresh: options.refresh
         });
 
         if (!isMounted) return;
         setAlphaTweets(response.data);
         setAlphaMeta(response.meta);
 
-        if (response.meta.sync?.warnings?.length) {
-          setSyncMessage(response.meta.sync.warnings.join(' '));
+        const syncWarnings = response.meta.sync?.warnings ?? [];
+        const syncErrors = response.meta.sync?.errors ?? [];
+        if (syncWarnings.length > 0 || syncErrors.length > 0) {
+          setSyncMessage([...syncWarnings, ...syncErrors].join(' | '));
+        } else if (options.refresh) {
+          setSyncMessage('');
         }
       } catch (error) {
         if (!isMounted) return;
         setFeedError(error instanceof Error ? error.message : 'Failed to load alpha feed.');
       } finally {
-        if (isMounted) {
+        if (isMounted && options.showLoader) {
           setIsFeedLoading(false);
         }
       }
     }
 
-    void load();
+    void loadFeed({ showLoader: true, refresh: false });
+    const timer = window.setInterval(() => {
+      void loadFeed({ showLoader: false, refresh: true });
+    }, 45_000);
+
     return () => {
       isMounted = false;
+      window.clearInterval(timer);
     };
   }, [accountFilterKey, keywordFilterKey, selectedAccounts, selectedKeywords]);
 
@@ -208,10 +245,10 @@ export function DashboardPage() {
       try {
         const walletEvents = await fetchWalletActivityEvents({ limit: 160 });
         if (!isMounted) return;
-        setActivityTimeline(buildTrackedActivityEntries(walletEvents, localMints, 12));
+        setWalletTimelineEvents(walletEvents);
       } catch (error) {
         if (!isMounted) return;
-        setActivityTimeline(buildTrackedActivityEntries([], localMints, 12));
+        setWalletTimelineEvents([]);
         setActivityError(error instanceof Error ? error.message : 'Failed to load activity timeline.');
       } finally {
         if (isMounted) {
@@ -229,7 +266,7 @@ export function DashboardPage() {
       isMounted = false;
       window.clearInterval(timer);
     };
-  }, [localMints]);
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -242,26 +279,40 @@ export function DashboardPage() {
   useEffect(() => {
     let isMounted = true;
 
-    async function loadMintCalendar() {
-      setIsCalendarLoading(true);
+    async function loadMarketplace(showLoader: boolean) {
+      if (showLoader) {
+        setIsMarketplaceLoading(true);
+      } else {
+        setIsMarketplaceRefreshing(true);
+      }
+      setMarketplaceError('');
 
       try {
-        const response = await fetchUpcomingMarketplaceMints({ days: 45, limit: 24 });
+        const response = await fetchUpcomingMarketplaceMints({ days: 90, limit: 120 });
         if (!isMounted) return;
-        setCalendarItems(response.data);
+        setMarketplaceMints(response.data);
+        setMarketplaceMeta(response.meta);
       } catch (error) {
         if (!isMounted) return;
-        setCalendarItems([]);
+        setMarketplaceMints([]);
+        setMarketplaceMeta(null);
+        setMarketplaceError(error instanceof Error ? error.message : 'Failed to load NFT calendar.');
       } finally {
         if (isMounted) {
-          setIsCalendarLoading(false);
+          setIsMarketplaceLoading(false);
+          setIsMarketplaceRefreshing(false);
         }
       }
     }
 
-    void loadMintCalendar();
+    void loadMarketplace(true);
+    const timer = window.setInterval(() => {
+      void loadMarketplace(false);
+    }, 90_000);
+
     return () => {
       isMounted = false;
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -313,6 +364,20 @@ export function DashboardPage() {
       setFeedError(error instanceof Error ? error.message : 'Failed to summarize tweets.');
     } finally {
       setIsAiSummarizing(false);
+    }
+  }
+
+  async function handleRefreshMarketplace() {
+    setIsMarketplaceRefreshing(true);
+    setMarketplaceError('');
+    try {
+      const response = await fetchUpcomingMarketplaceMints({ days: 90, limit: 120 });
+      setMarketplaceMints(response.data);
+      setMarketplaceMeta(response.meta);
+    } catch (error) {
+      setMarketplaceError(error instanceof Error ? error.message : 'Failed to refresh NFT calendar.');
+    } finally {
+      setIsMarketplaceRefreshing(false);
     }
   }
 
@@ -377,7 +442,11 @@ export function DashboardPage() {
 
   const configuredAccounts = alphaMeta?.configuredAccounts ?? [];
   const configuredKeywords = alphaMeta?.configuredKeywords?.length ? alphaMeta.configuredKeywords : defaultKeywords;
-  const nextMarketplaceMint = calendarItems[0] ?? null;
+  const manualTrackedMints = useMemo(() => localMints.filter((mint) => mint.deletedAt === null), [localMints]);
+  const nextTrackedMint = useMemo(
+    () => manualTrackedMints.filter((mint) => mint.mintAt >= nowTick).sort((a, b) => a.mintAt - b.mintAt)[0] ?? null,
+    [manualTrackedMints, nowTick]
+  );
   const operatorName = useMemo(
     () => resolveOperatorName(user?.displayName ?? null, user?.email ?? null),
     [user?.displayName, user?.email]
@@ -477,16 +546,24 @@ export function DashboardPage() {
         if (rankA !== rankB) return rankA - rankB;
         return a.title.localeCompare(b.title);
       })
-      .slice(0, 12);
+      .slice(0, 24);
   }, [dayBounds.end, dayBounds.start, localMints, localReminders, nowTick, todoTasks]);
 
   const pendingCompanionCount = useMemo(
     () => companionAgenda.filter((item) => item.status !== 'done').length,
     [companionAgenda]
   );
-  const nextCompanionItem = useMemo(
-    () => companionAgenda.find((item) => item.status !== 'done') ?? companionAgenda[0] ?? null,
+  const actionableCompanionAgenda = useMemo(
+    () => companionAgenda.filter((item) => item.status !== 'done'),
     [companionAgenda]
+  );
+  const jarvisBriefing = useMemo(
+    () => buildJarvisBriefing(operatorName, nowTick, actionableCompanionAgenda),
+    [actionableCompanionAgenda, nowTick, operatorName]
+  );
+  const jarvisTimeBuckets = useMemo(
+    () => groupAgendaByIstWindow(actionableCompanionAgenda),
+    [actionableCompanionAgenda]
   );
 
   async function handleToggleTaskFromCompanion(taskId: number, done: boolean) {
@@ -517,39 +594,138 @@ export function DashboardPage() {
         <GlassCard
           title="Upcoming Mint"
           icon={<CalendarClock className="h-4 w-4" />}
-          className="lg:col-span-5"
+          className="lg:col-span-4"
         >
-          {isCalendarLoading ? (
-            <p className="text-sm text-slate-300">Loading upcoming mint feed...</p>
-          ) : nextMarketplaceMint ? (
+          {nextTrackedMint ? (
             <>
               <div className="flex flex-wrap items-center gap-2">
                 <span
                   className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
-                    nextMarketplaceMint.source === 'magiceden'
-                      ? 'border-cyan-300/35 bg-cyan-300/10 text-cyan-200'
-                      : 'border-emerald-300/35 bg-emerald-300/10 text-emerald-200'
+                    nextTrackedMint.visibility === 'whitelist'
+                      ? 'border-indigo-300/35 bg-indigo-300/10 text-indigo-200'
+                      : 'border-cyan-300/35 bg-cyan-300/10 text-cyan-200'
                   }`}
                 >
-                  {nextMarketplaceMint.sourceLabel}
+                  {nextTrackedMint.visibility === 'whitelist' ? 'Whitelist' : 'Public'}
                 </span>
-                <p className="text-sm text-slate-200">{nextMarketplaceMint.name}</p>
+                <p className="text-sm text-slate-200">{nextTrackedMint.name}</p>
               </div>
               <p className="mt-2 text-sm text-slate-300">
-                Starts {new Date(nextMarketplaceMint.startsAt).toLocaleString()} ({nextMarketplaceMint.chain})
+                Starts {formatTimelineTime(nextTrackedMint.mintAt)} ({nextTrackedMint.chain})
               </p>
-              <p className="mt-2 text-xs text-glow">{formatTimeUntil(nextMarketplaceMint.startsAt, nowTick)}</p>
+              <p className="mt-2 text-xs text-glow">{formatTimeUntil(nextTrackedMint.mintAt, nowTick)}</p>
               <div className="mt-4 grid grid-cols-4 gap-2">
-                {formatCountdownParts(nextMarketplaceMint.startsAt, nowTick).map(([value, label]) => (
+                {formatCountdownParts(nextTrackedMint.mintAt, nowTick).map(([value, label]) => (
                   <div key={label} className="rounded-xl border border-white/10 bg-white/[0.03] px-2 py-3 text-center">
                     <p className="font-display text-lg text-white">{value}</p>
                     <p className="text-[10px] uppercase tracking-wide text-slate-400">{label}</p>
                   </div>
                 ))}
               </div>
+              {nextTrackedMint.link ? (
+                <a
+                  href={nextTrackedMint.link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-3 inline-flex items-center rounded-lg border border-slate-600 bg-panelAlt px-3 py-1.5 text-xs text-slate-100 transition hover:border-slate-500"
+                >
+                  Open mint link
+                  <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                </a>
+              ) : null}
             </>
           ) : (
-            <p className="text-sm text-slate-300">No upcoming mint data available yet.</p>
+            <p className="text-sm text-slate-300">
+              No upcoming manual mint found. Add mints in NFT Mint Tracker.
+            </p>
+          )}
+        </GlassCard>
+
+        <GlassCard title="NFT Calendar" icon={<CalendarClock className="h-4 w-4" />} className="lg:col-span-8">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-slate-400">
+              All upcoming marketplace mints
+              {marketplaceMeta ? ` | Next ${marketplaceMeta.days} days` : ''}
+            </p>
+            <Button
+              type="button"
+              variant="ghost"
+              className="px-3"
+              onClick={() => void handleRefreshMarketplace()}
+              disabled={isMarketplaceRefreshing}
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${isMarketplaceRefreshing ? 'animate-spin' : ''}`} />
+              {isMarketplaceRefreshing ? 'Refreshing...' : 'Refresh'}
+            </Button>
+          </div>
+
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-300">
+            <span className="rounded-full border border-cyan-300/35 bg-cyan-300/10 px-2 py-0.5 text-cyan-200">
+              Magic Eden: {marketplaceMeta?.providers.magiceden.count ?? 0}
+            </span>
+            <span className="rounded-full border border-emerald-300/35 bg-emerald-300/10 px-2 py-0.5 text-emerald-200">
+              OpenSea: {marketplaceMeta?.providers.opensea.count ?? 0}
+            </span>
+            <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5">
+              Total: {marketplaceMints.length}
+            </span>
+          </div>
+
+          {marketplaceError ? (
+            <div className="mb-3 rounded-xl border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm text-rose-200">
+              {marketplaceError}
+            </div>
+          ) : null}
+
+          {isMarketplaceLoading ? (
+            <p className="text-sm text-slate-300">Loading NFT calendar...</p>
+          ) : marketplaceMints.length === 0 ? (
+            <p className="text-sm text-slate-300">No upcoming marketplace mints found.</p>
+          ) : (
+            <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
+              {marketplaceMints.map((mint) => (
+                <article key={mint.id} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5">
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                          mint.source === 'magiceden'
+                            ? 'border-cyan-300/35 bg-cyan-300/10 text-cyan-200'
+                            : 'border-emerald-300/35 bg-emerald-300/10 text-emerald-200'
+                        }`}
+                      >
+                        {mint.sourceLabel}
+                      </span>
+                      <p className="truncate text-sm text-white">{mint.name}</p>
+                    </div>
+                    <p className="text-xs text-slate-400">{formatMarketplaceMintTime(mint.startsAt)}</p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                    <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5 uppercase tracking-wide">
+                      {mint.chain}
+                    </span>
+                    {mint.stageLabel ? (
+                      <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5 uppercase tracking-wide">
+                        {mint.stageLabel}
+                      </span>
+                    ) : null}
+                    <span className="text-cyan-200">{formatTimeUntil(mint.startsAt, nowTick)}</span>
+                    {mint.url ? (
+                      <a
+                        href={mint.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="ml-auto inline-flex items-center rounded-lg border border-slate-600 bg-panelAlt px-2.5 py-1 text-xs text-slate-100 transition hover:border-slate-500"
+                      >
+                        Open
+                        <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                      </a>
+                    ) : null}
+                  </div>
+                </article>
+              ))}
+            </div>
           )}
         </GlassCard>
 
@@ -583,7 +759,7 @@ export function DashboardPage() {
 
         <GlassCard title="Activity Timeline" icon={<Clock3 className="h-4 w-4" />} className="lg:col-span-4">
           {isActivityLoading ? (
-            <p className="text-sm text-slate-300">Loading wallet and whitelist activity...</p>
+            <p className="text-sm text-slate-300">Loading activity stream...</p>
           ) : (
             <div className="relative pl-5">
               <div className="absolute left-[7px] top-1 h-[calc(100%-8px)] w-px bg-white/15" />
@@ -608,16 +784,16 @@ export function DashboardPage() {
           )}
         </GlassCard>
 
-        <GlassCard title="AI Mission Companion" icon={<Brain className="h-4 w-4" />} className="lg:col-span-4">
+        <GlassCard title="JARVIS AI Assistant" icon={<Brain className="h-4 w-4" />} className="lg:col-span-8">
           <div className="rounded-2xl border border-cyan-300/25 bg-cyan-300/10 p-3">
-            <p className="text-sm font-medium text-cyan-100">{buildCompanionGreeting(operatorName, nowTick)}</p>
+            <p className="text-sm font-medium text-cyan-100">{jarvisBriefing.greeting}</p>
             <p className="mt-1 text-xs text-cyan-200/90">
               {formatIstDateHeadline(nowTick)} | {pendingCompanionCount} action{pendingCompanionCount === 1 ? '' : 's'} queued.
             </p>
-            <p className="mt-2 text-xs text-slate-200">
-              {nextCompanionItem
-                ? `Next up: ${nextCompanionItem.title}${nextCompanionItem.at ? ` at ${formatIstTime(nextCompanionItem.at)}` : ' anytime'}`
-                : 'No scheduled actions for today. Add tasks or mints to build your day plan.'}
+            <p className="mt-2 text-xs text-slate-200">{jarvisBriefing.summary}</p>
+            {jarvisBriefing.nextAction ? <p className="mt-1 text-xs text-cyan-100">{jarvisBriefing.nextAction}</p> : null}
+            <p className="mt-2 text-[11px] text-slate-300">
+              This day plan is generated from your NFT Mint Tracker + Task Planner for the current IST day.
             </p>
           </div>
 
@@ -627,11 +803,26 @@ export function DashboardPage() {
             </div>
           ) : null}
 
-          {companionAgenda.length === 0 ? (
+          {jarvisTimeBuckets.some((bucket) => bucket.items.length > 0) ? (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              {jarvisTimeBuckets
+                .filter((bucket) => bucket.items.length > 0)
+                .map((bucket) => (
+                  <div key={bucket.key} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-400">{bucket.label}</p>
+                    <p className="mt-1 text-sm text-slate-100">
+                      {bucket.items.length} action{bucket.items.length === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                ))}
+            </div>
+          ) : null}
+
+          {actionableCompanionAgenda.length === 0 ? (
             <p className="mt-3 text-sm text-slate-300">No checklist for today yet.</p>
           ) : (
             <ol className="mt-3 space-y-2">
-              {companionAgenda.map((item) => (
+              {actionableCompanionAgenda.map((item) => (
                 <li
                   key={item.id}
                   className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2"
@@ -815,6 +1006,7 @@ export function DashboardPage() {
             </div>
           ) : null}
 
+          <p className="mb-2 text-xs text-slate-400">Auto-sync runs every 45s for backend tracked accounts.</p>
           {syncMessage ? <p className="mb-2 text-xs text-cyan-200">{syncMessage}</p> : null}
           {alphaMeta?.lastFetchedAt ? (
             <p className="mb-2 text-xs text-slate-400">
@@ -908,8 +1100,8 @@ export function DashboardPage() {
   );
 }
 
-function formatTimeUntil(isoString: string, nowMs: number) {
-  const targetMs = new Date(isoString).getTime();
+function formatTimeUntil(value: string | number, nowMs: number) {
+  const targetMs = new Date(value).getTime();
   if (!Number.isFinite(targetMs)) return 'Unknown time';
 
   const diffMs = targetMs - nowMs;
@@ -928,6 +1120,7 @@ function formatTimeUntil(isoString: string, nowMs: number) {
 function timelineDotClass(kind: TrackedActivityEntry['kind']) {
   if (kind === 'minted_nft') return 'border-emerald-300/50 bg-emerald-300/20';
   if (kind === 'sold_nft') return 'border-rose-300/50 bg-rose-300/20';
+  if (kind === 'app_activity') return 'border-amber-300/50 bg-amber-300/20';
   return 'border-cyan-300/50 bg-cyan-300/20';
 }
 
@@ -943,8 +1136,8 @@ function formatTimelineTime(timestamp: number) {
   return `${value} IST`;
 }
 
-function formatCountdownParts(isoString: string, nowMs: number) {
-  const targetMs = new Date(isoString).getTime();
+function formatCountdownParts(value: string | number, nowMs: number) {
+  const targetMs = new Date(value).getTime();
   if (!Number.isFinite(targetMs)) {
     return [
       ['00', 'Days'],
@@ -967,6 +1160,17 @@ function formatCountdownParts(isoString: string, nowMs: number) {
     [String(minutes).padStart(2, '0'), 'Mins'],
     [String(seconds).padStart(2, '0'), 'Secs']
   ] as const;
+}
+
+function formatMarketplaceMintTime(value: string) {
+  return `${new Date(value).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  })} IST`;
 }
 
 function resolveOperatorName(displayName: string | null, email: string | null) {
@@ -1000,6 +1204,63 @@ function formatIstTime(timestamp: number) {
     minute: '2-digit',
     hour12: true
   });
+}
+
+function buildJarvisBriefing(operatorName: string, nowMs: number, agendaItems: CompanionAgendaItem[]): JarvisBriefing {
+  const greeting = `${buildCompanionGreeting(operatorName, nowMs)} JARVIS online.`;
+  if (agendaItems.length === 0) {
+    return {
+      greeting,
+      summary: 'No timed actions are queued for today. Add tasks or mints, and I will build your day schedule.',
+      nextAction: ''
+    };
+  }
+
+  const timedCount = agendaItems.filter((item) => item.at !== null).length;
+  const anytimeCount = agendaItems.length - timedCount;
+  const nextItem = agendaItems[0];
+  const summaryParts = [
+    `${timedCount} timed action${timedCount === 1 ? '' : 's'} planned`,
+    anytimeCount > 0 ? `${anytimeCount} flexible action${anytimeCount === 1 ? '' : 's'}` : null
+  ].filter((part): part is string => Boolean(part));
+
+  return {
+    greeting,
+    summary: `Today's mission plan: ${summaryParts.join(' | ')}.`,
+    nextAction: `Next action: ${nextItem.title}${nextItem.at ? ` at ${formatIstTime(nextItem.at)}` : ' anytime'}.`
+  };
+}
+
+function groupAgendaByIstWindow(items: CompanionAgendaItem[]): JarvisTimeBucket[] {
+  const buckets: JarvisTimeBucket[] = [
+    { key: 'morning', label: 'Morning', items: [] },
+    { key: 'afternoon', label: 'Afternoon', items: [] },
+    { key: 'evening', label: 'Evening', items: [] },
+    { key: 'night', label: 'Night', items: [] },
+    { key: 'anytime', label: 'Anytime', items: [] }
+  ];
+  const bucketMap = new Map<JarvisTimeWindowKey, JarvisTimeBucket>(buckets.map((bucket) => [bucket.key, bucket]));
+
+  for (const item of items) {
+    const key = resolveJarvisWindowKey(item.at);
+    bucketMap.get(key)?.items.push(item);
+  }
+
+  return buckets;
+}
+
+function resolveJarvisWindowKey(timestamp: number | null): JarvisTimeWindowKey {
+  if (timestamp === null) return 'anytime';
+  const hour = getIstHour(timestamp);
+  if (hour >= 5 && hour <= 11) return 'morning';
+  if (hour >= 12 && hour <= 16) return 'afternoon';
+  if (hour >= 17 && hour <= 21) return 'evening';
+  return 'night';
+}
+
+function getIstHour(timestamp: number) {
+  const shifted = new Date(timestamp + 330 * 60 * 1000);
+  return shifted.getUTCHours();
 }
 
 function priorityLabel(priority: TodoTaskRecord['priority']) {

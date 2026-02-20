@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { motion } from 'framer-motion';
-import { BarChart3, CheckCircle2, Clock3, Droplets, TrendingUp } from 'lucide-react';
+import { BarChart3, CheckCircle2, Clock3, Droplets, RefreshCw, TrendingUp } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
@@ -8,17 +8,34 @@ import {
   summarizeTrackedActivities,
   type TrackedActivityEntry
 } from '../features/activity/stream';
-import { fetchNftPortfolioAnalytics, type PortfolioAnalytics } from '../features/analytics/api';
+import { listRecentAppActivityEvents } from '../features/activity/log';
+import {
+  createApiCostEvent,
+  fetchApiCostSummary,
+  fetchNftPortfolioAnalytics,
+  type ApiCostSummary,
+  type PortfolioAnalytics
+} from '../features/analytics/api';
 import { farmingDB } from '../features/farming/db';
 import { mintDB } from '../features/mints/db';
 import { todoDB } from '../features/todo/db';
-import { fetchWalletActivityEvents } from '../features/walletTracker/api';
+import { fetchWalletActivityEvents, type WalletActivityEvent } from '../features/walletTracker/api';
+import { Button } from '../components/ui/Button';
+import { Input } from '../components/ui/Input';
 
 type ChartPoint = {
   key: string;
   label: string;
   value: number;
   ratio: number;
+};
+
+type CustomApiCostFormState = {
+  providerKey: string;
+  operation: string;
+  requestCount: string;
+  costUsd: string;
+  note: string;
 };
 
 function GlassCard({
@@ -87,6 +104,14 @@ function buildRecentDayKeys(windowSize: number, nowMs: number) {
   return output;
 }
 
+const defaultCustomApiCostForm: CustomApiCostFormState = {
+  providerKey: 'rest',
+  operation: 'manual_entry',
+  requestCount: '1',
+  costUsd: '',
+  note: ''
+};
+
 export function AnalyticsPage() {
   const nowMs = Date.now();
   const mintRows = useLiveQuery(
@@ -98,16 +123,29 @@ export function AnalyticsPage() {
     async () => (await farmingDB.projects.toArray()).filter((project) => project.deletedAt === null),
     []
   );
+  const appActivityRows = useLiveQuery(async () => listRecentAppActivityEvents(400), []);
   const [portfolio, setPortfolio] = useState<PortfolioAnalytics | null>(null);
   const [isPortfolioLoading, setIsPortfolioLoading] = useState(true);
   const [portfolioError, setPortfolioError] = useState('');
-  const [trackedActivities, setTrackedActivities] = useState<TrackedActivityEntry[]>([]);
+  const [apiCosts, setApiCosts] = useState<ApiCostSummary | null>(null);
+  const [isApiCostsLoading, setIsApiCostsLoading] = useState(true);
+  const [isApiCostsRefreshing, setIsApiCostsRefreshing] = useState(false);
+  const [apiCostsError, setApiCostsError] = useState('');
+  const [customApiCostForm, setCustomApiCostForm] = useState<CustomApiCostFormState>(defaultCustomApiCostForm);
+  const [isCustomCostSubmitting, setIsCustomCostSubmitting] = useState(false);
+  const [customCostMessage, setCustomCostMessage] = useState('');
+  const [walletTimelineEvents, setWalletTimelineEvents] = useState<WalletActivityEvent[]>([]);
   const [isActivityLoading, setIsActivityLoading] = useState(true);
   const [activityError, setActivityError] = useState('');
 
   const mints = useMemo(() => mintRows ?? [], [mintRows]);
   const tasks = useMemo(() => taskRows ?? [], [taskRows]);
   const projects = useMemo(() => farmingRows ?? [], [farmingRows]);
+  const appActivityEvents = useMemo(() => appActivityRows ?? [], [appActivityRows]);
+  const trackedActivities = useMemo(
+    () => buildTrackedActivityEntries(walletTimelineEvents, mints, appActivityEvents, 120),
+    [appActivityEvents, mints, walletTimelineEvents]
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -138,6 +176,43 @@ export function AnalyticsPage() {
   useEffect(() => {
     let isMounted = true;
 
+    async function loadApiCosts(showLoader: boolean) {
+      if (showLoader) {
+        setIsApiCostsLoading(true);
+      } else {
+        setIsApiCostsRefreshing(true);
+      }
+      setApiCostsError('');
+
+      try {
+        const response = await fetchApiCostSummary({ days: 30, recentLimit: 40, providerLimit: 20 });
+        if (!isMounted) return;
+        setApiCosts(response);
+      } catch (error) {
+        if (!isMounted) return;
+        setApiCostsError(error instanceof Error ? error.message : 'Failed to load API cost analytics.');
+      } finally {
+        if (isMounted) {
+          setIsApiCostsLoading(false);
+          setIsApiCostsRefreshing(false);
+        }
+      }
+    }
+
+    void loadApiCosts(true);
+    const timer = window.setInterval(() => {
+      void loadApiCosts(false);
+    }, 45_000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
     async function loadTrackedActivities(showLoader: boolean) {
       if (showLoader) {
         setIsActivityLoading(true);
@@ -146,10 +221,10 @@ export function AnalyticsPage() {
       try {
         const walletEvents = await fetchWalletActivityEvents({ limit: 250 });
         if (!isMounted) return;
-        setTrackedActivities(buildTrackedActivityEntries(walletEvents, mints, 120));
+        setWalletTimelineEvents(walletEvents);
       } catch (error) {
         if (!isMounted) return;
-        setTrackedActivities(buildTrackedActivityEntries([], mints, 120));
+        setWalletTimelineEvents([]);
         setActivityError(error instanceof Error ? error.message : 'Failed to load activity stream.');
       } finally {
         if (isMounted) {
@@ -167,7 +242,7 @@ export function AnalyticsPage() {
       isMounted = false;
       window.clearInterval(timer);
     };
-  }, [mints]);
+  }, []);
 
   const mintStats = useMemo(() => {
     const total = mints.length;
@@ -357,6 +432,54 @@ export function AnalyticsPage() {
     };
   }, [trackedActivities, nowMs]);
 
+  async function handleRefreshApiCosts() {
+    setIsApiCostsRefreshing(true);
+    setApiCostsError('');
+    try {
+      const response = await fetchApiCostSummary({ days: 30, recentLimit: 40, providerLimit: 20 });
+      setApiCosts(response);
+    } catch (error) {
+      setApiCostsError(error instanceof Error ? error.message : 'Failed to refresh API cost analytics.');
+    } finally {
+      setIsApiCostsRefreshing(false);
+    }
+  }
+
+  async function handleSubmitCustomApiCost() {
+    setCustomCostMessage('');
+    setApiCostsError('');
+    const requestCount = Number(customApiCostForm.requestCount || '1');
+    const costUsd = Number(customApiCostForm.costUsd);
+    if (!Number.isFinite(costUsd) || costUsd < 0) {
+      setCustomCostMessage('Cost must be a valid non-negative number.');
+      return;
+    }
+    if (!Number.isFinite(requestCount) || requestCount <= 0) {
+      setCustomCostMessage('Request count must be greater than zero.');
+      return;
+    }
+
+    setIsCustomCostSubmitting(true);
+    try {
+      await createApiCostEvent({
+        providerKey: customApiCostForm.providerKey.trim().toLowerCase() || 'rest',
+        operation: customApiCostForm.operation.trim() || 'manual_entry',
+        requestCount: Math.floor(requestCount),
+        costUsd,
+        success: true,
+        metadata: customApiCostForm.note.trim() ? { note: customApiCostForm.note.trim(), source: 'manual_ui' } : { source: 'manual_ui' }
+      });
+      setCustomApiCostForm((prev) => ({ ...prev, costUsd: '', note: '' }));
+      setCustomCostMessage('Custom API cost logged.');
+      const refreshed = await fetchApiCostSummary({ days: 30, recentLimit: 40, providerLimit: 20 });
+      setApiCosts(refreshed);
+    } catch (error) {
+      setCustomCostMessage(error instanceof Error ? error.message : 'Failed to save custom API cost.');
+    } finally {
+      setIsCustomCostSubmitting(false);
+    }
+  }
+
   return (
     <section className="mx-auto max-w-7xl">
       <motion.header
@@ -459,12 +582,12 @@ export function AnalyticsPage() {
           </div>
         </GlassCard>
 
-        <GlassCard title="Wallet + Whitelist Activity" icon={<Clock3 className="h-4 w-4" />} className="lg:col-span-12">
+        <GlassCard title="Platform Activity Timeline" icon={<Clock3 className="h-4 w-4" />} className="lg:col-span-12">
           {isActivityLoading ? (
-            <p className="text-sm text-slate-300">Loading minted, sold, and whitelist activities...</p>
+            <p className="text-sm text-slate-300">Loading activity stream...</p>
           ) : (
             <>
-              <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
                 <MetricCell label="Total Activities" value={String(activityStats.summaryAll.total)} />
                 <MetricCell label="Minted NFTs (30d)" value={String(activityStats.summary30d.mintedNftCount)} />
                 <MetricCell label="Sold NFTs (30d)" value={String(activityStats.summary30d.soldNftCount)} />
@@ -472,6 +595,7 @@ export function AnalyticsPage() {
                   label="Whitelist Entries (30d)"
                   value={String(activityStats.summary30d.enteredWhitelistCount)}
                 />
+                <MetricCell label="App Actions (30d)" value={String(activityStats.summary30d.appActivityCount)} />
               </div>
 
               <div className="grid gap-4 lg:grid-cols-2">
@@ -521,6 +645,152 @@ export function AnalyticsPage() {
               {activityError ? <p className="mt-3 text-xs text-amber-200">{activityError}</p> : null}
             </>
           )}
+        </GlassCard>
+
+        <GlassCard title="API Cost Tracker" icon={<BarChart3 className="h-4 w-4" />} className="lg:col-span-12">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-400">
+              Auto-tracked: OpenAI, Twitter, Brevo, OpenSea, Magic Eden | Window: Last {apiCosts?.windowDays ?? 30} days
+            </p>
+            <Button
+              type="button"
+              variant="ghost"
+              className="px-3"
+              onClick={() => void handleRefreshApiCosts()}
+              disabled={isApiCostsRefreshing}
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${isApiCostsRefreshing ? 'animate-spin' : ''}`} />
+              {isApiCostsRefreshing ? 'Refreshing...' : 'Refresh'}
+            </Button>
+          </div>
+
+          {isApiCostsLoading ? (
+            <p className="text-sm text-slate-300">Loading API usage and cost records...</p>
+          ) : apiCosts ? (
+            <>
+              <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                <MetricCell label="30d Cost (USD)" value={formatUsd(apiCosts.totals.window.totalCostUsd)} />
+                <MetricCell label="30d Requests" value={String(apiCosts.totals.window.totalRequests)} />
+                <MetricCell label="OpenAI Input Tokens" value={String(apiCosts.totals.window.totalInputTokens)} />
+                <MetricCell label="OpenAI Output Tokens" value={String(apiCosts.totals.window.totalOutputTokens)} />
+                <MetricCell label="All-Time Cost (USD)" value={formatUsd(apiCosts.totals.allTime.totalCostUsd)} />
+              </div>
+
+              <div className="mb-4 grid gap-4 lg:grid-cols-2">
+                <div>
+                  <p className="mb-2 text-xs uppercase tracking-[0.12em] text-slate-400">Provider Breakdown (30d)</p>
+                  {apiCosts.providers.length === 0 ? (
+                    <p className="text-sm text-slate-300">No API usage events recorded yet.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {apiCosts.providers.map((row) => (
+                        <div key={row.providerKey} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <p className="text-sm uppercase text-white">{row.providerKey}</p>
+                            <p className="text-xs text-cyan-200">{formatUsd(row.totalCostUsd)}</p>
+                          </div>
+                          <p className="text-xs text-slate-400">
+                            Requests: {row.totalRequests} | Events: {row.eventsCount}
+                            {row.lastEventAt ? ` | Last: ${new Date(row.lastEventAt).toLocaleString()}` : ''}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <p className="mb-2 text-xs uppercase tracking-[0.12em] text-slate-400">Manual Cost Entry (Other APIs)</p>
+                  <div className="space-y-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <Input
+                      placeholder="Provider key (e.g. alchemy, coingecko, rest)"
+                      value={customApiCostForm.providerKey}
+                      onChange={(event) =>
+                        setCustomApiCostForm((prev) => ({ ...prev, providerKey: event.target.value }))
+                      }
+                    />
+                    <Input
+                      placeholder="Operation (optional)"
+                      value={customApiCostForm.operation}
+                      onChange={(event) =>
+                        setCustomApiCostForm((prev) => ({ ...prev, operation: event.target.value }))
+                      }
+                    />
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <Input
+                        type="number"
+                        min="1"
+                        placeholder="Request count"
+                        value={customApiCostForm.requestCount}
+                        onChange={(event) =>
+                          setCustomApiCostForm((prev) => ({ ...prev, requestCount: event.target.value }))
+                        }
+                      />
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.000001"
+                        placeholder="Cost USD"
+                        value={customApiCostForm.costUsd}
+                        onChange={(event) =>
+                          setCustomApiCostForm((prev) => ({ ...prev, costUsd: event.target.value }))
+                        }
+                      />
+                    </div>
+                    <Input
+                      placeholder="Note (optional)"
+                      value={customApiCostForm.note}
+                      onChange={(event) => setCustomApiCostForm((prev) => ({ ...prev, note: event.target.value }))}
+                    />
+                    <div className="flex items-center justify-between gap-2">
+                      <Button
+                        type="button"
+                        onClick={() => void handleSubmitCustomApiCost()}
+                        disabled={isCustomCostSubmitting}
+                      >
+                        {isCustomCostSubmitting ? 'Saving...' : 'Log Cost'}
+                      </Button>
+                      {customCostMessage ? <p className="text-xs text-slate-300">{customCostMessage}</p> : null}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <p className="mb-2 text-xs uppercase tracking-[0.12em] text-slate-400">Recent API Usage Events</p>
+              <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                {apiCosts.recentEvents.length === 0 ? (
+                  <p className="text-sm text-slate-300">No events yet.</p>
+                ) : (
+                  apiCosts.recentEvents.slice(0, 30).map((event) => (
+                    <div key={event.id} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs">
+                      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                        <p className="uppercase text-white">
+                          {event.providerKey} | {event.operation}
+                        </p>
+                        <p className={event.success ? 'text-emerald-200' : 'text-rose-200'}>
+                          {event.success ? 'OK' : 'FAILED'}
+                          {event.httpStatus ? ` (${event.httpStatus})` : ''}
+                        </p>
+                      </div>
+                      <p className="text-slate-300">
+                        Cost: {formatUsd(event.costUsd)} | Requests: {event.requestCount}
+                        {event.inputTokens > 0 || event.outputTokens > 0
+                          ? ` | Tokens: in ${event.inputTokens}, out ${event.outputTokens}`
+                          : ''}
+                      </p>
+                      <p className="text-slate-500">
+                        {event.endpoint ?? 'No endpoint'} | {new Date(event.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-slate-300">API cost data unavailable.</p>
+          )}
+
+          {apiCostsError ? <p className="mt-3 text-xs text-amber-200">{apiCostsError}</p> : null}
         </GlassCard>
 
         <GlassCard title="NFT Portfolio Profit / Loss" icon={<Clock3 className="h-4 w-4" />} className="lg:col-span-12">
@@ -694,12 +964,14 @@ function MetricCell({ label, value }: { label: string; value: string }) {
 function activityKindLabel(kind: TrackedActivityEntry['kind']) {
   if (kind === 'minted_nft') return 'Minted NFT';
   if (kind === 'sold_nft') return 'Sold NFT';
+  if (kind === 'app_activity') return 'App Activity';
   return 'Whitelist';
 }
 
 function activityBadgeClass(kind: TrackedActivityEntry['kind']) {
   if (kind === 'minted_nft') return 'border-emerald-300/40 bg-emerald-300/10 text-emerald-200';
   if (kind === 'sold_nft') return 'border-rose-300/40 bg-rose-300/10 text-rose-200';
+  if (kind === 'app_activity') return 'border-amber-300/40 bg-amber-300/10 text-amber-200';
   return 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200';
 }
 
@@ -720,6 +992,10 @@ function formatCurrencyRows(rows: Array<{ currency: string; amount: number }>) {
     .slice(0, 3)
     .map((row) => `${row.amount >= 0 ? '+' : ''}${round(row.amount)} ${row.currency}`)
     .join(' | ');
+}
+
+function formatUsd(value: number) {
+  return `$${round(value, 6)}`;
 }
 
 function round(value: number, decimals = 4) {

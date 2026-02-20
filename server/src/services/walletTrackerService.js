@@ -1,6 +1,7 @@
 import { pool } from '../config/db.js';
 import { env } from '../config/env.js';
 import { triggerAutomationNotification } from './notificationService.js';
+import { recordApiUsageSafely } from './apiCostService.js';
 
 const SUPPORTED_EVENT_TYPES = ['buy', 'sell', 'mint', 'transfer'];
 const SUPPORTED_WALLET_TRACKER_PLATFORMS = ['opensea', 'magiceden'];
@@ -198,6 +199,7 @@ async function fetchOpenSeaEvents(walletAddress) {
 
   try {
     for (const endpoint of endpoints) {
+      const startedAt = Date.now();
       const response = await fetch(endpoint, {
         method: 'GET',
         headers: {
@@ -205,6 +207,19 @@ async function fetchOpenSeaEvents(walletAddress) {
           ...(apiKey ? { 'x-api-key': apiKey } : {})
         },
         signal: controller.signal
+      });
+
+      void recordApiUsageSafely({
+        providerKey: 'opensea',
+        operation: 'wallet_events',
+        endpoint,
+        requestCount: 1,
+        statusCode: response.status,
+        success: response.ok,
+        metadata: {
+          service: 'wallet_tracker',
+          durationMs: Date.now() - startedAt
+        }
       });
 
       if (!response.ok) {
@@ -318,6 +333,7 @@ async function fetchMagicEdenEvents(walletAddress) {
   const timeout = setTimeout(() => controller.abort(), env.walletTracker.requestTimeoutMs);
 
   try {
+    const startedAt = Date.now();
     const response = await fetch(endpoint, {
       method: 'GET',
       headers: {
@@ -325,6 +341,19 @@ async function fetchMagicEdenEvents(walletAddress) {
         ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
       },
       signal: controller.signal
+    });
+
+    void recordApiUsageSafely({
+      providerKey: 'magiceden',
+      operation: 'wallet_events',
+      endpoint,
+      requestCount: 1,
+      statusCode: response.status,
+      success: response.ok,
+      metadata: {
+        service: 'wallet_tracker',
+        durationMs: Date.now() - startedAt
+      }
     });
 
     if (!response.ok) {

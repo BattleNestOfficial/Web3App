@@ -495,7 +495,7 @@ export function MintTrackerPage() {
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Marketplace Mint Calendar</p>
+              <p className="text-xs uppercase tracking-[0.14em] text-slate-400">NFT Calendar (All Upcoming)</p>
               <Button
                 type="button"
                 variant="ghost"

@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+import { recordAppActivity } from '../activity/log';
 
 export type TaskPriority = 'low' | 'medium' | 'high';
 export type TaskRecurrence = 'none' | 'daily' | 'weekly' | 'monthly';
@@ -39,8 +40,9 @@ export const productivityDB = new ProductivityDatabase();
 
 export async function createTask(draft: ProductivityTaskDraft) {
   const now = Date.now();
+  const title = draft.title.trim() || 'Untitled task';
   await productivityDB.tasks.add({
-    title: draft.title.trim(),
+    title,
     dueAt: draft.dueAt,
     priority: draft.priority,
     recurrence: draft.recurrence,
@@ -48,27 +50,66 @@ export async function createTask(draft: ProductivityTaskDraft) {
     createdAt: now,
     updatedAt: now
   });
+
+  await recordAppActivity({
+    source: 'productivity',
+    action: 'create_task',
+    title: 'Productivity task added',
+    detail: `${title} | ${draft.status} | ${draft.priority}`,
+    happenedAt: now
+  });
 }
 
 export async function updateTask(id: number, draft: ProductivityTaskDraft) {
-  await productivityDB.tasks.update(id, {
-    title: draft.title.trim(),
+  const title = draft.title.trim() || 'Untitled task';
+  const now = Date.now();
+  const changed = await productivityDB.tasks.update(id, {
+    title,
     dueAt: draft.dueAt,
     priority: draft.priority,
     recurrence: draft.recurrence,
     status: draft.status,
-    updatedAt: Date.now()
+    updatedAt: now
+  });
+  if (!changed) return;
+  await recordAppActivity({
+    source: 'productivity',
+    action: 'update_task',
+    title: 'Productivity task updated',
+    detail: `${title} | ${draft.status} | ${draft.priority}`,
+    happenedAt: now
   });
 }
 
 export async function deleteTask(id: number) {
+  const existing = await productivityDB.tasks.get(id);
   await productivityDB.tasks.delete(id);
+  if (existing) {
+    await recordAppActivity({
+      source: 'productivity',
+      action: 'delete_task',
+      title: 'Productivity task deleted',
+      detail: existing.title,
+      happenedAt: Date.now()
+    });
+  }
 }
 
 export async function setTaskStatus(id: number, status: TaskStatus) {
+  const existing = await productivityDB.tasks.get(id);
+  if (!existing) return;
+  if (existing.status === status) return;
+  const now = Date.now();
   await productivityDB.tasks.update(id, {
     status,
-    updatedAt: Date.now()
+    updatedAt: now
+  });
+  await recordAppActivity({
+    source: 'productivity',
+    action: 'set_task_status',
+    title: 'Productivity task status changed',
+    detail: `${existing.title} | ${existing.status} -> ${status}`,
+    happenedAt: now
   });
 }
 
@@ -93,5 +134,12 @@ export async function completeTask(id: number) {
     dueAt: nextDue.getTime(),
     status: 'todo',
     updatedAt: Date.now()
+  });
+  await recordAppActivity({
+    source: 'productivity',
+    action: 'complete_and_reschedule',
+    title: 'Recurring task completed and rescheduled',
+    detail: `${task.title} | next due ${new Date(nextDue.getTime()).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`,
+    happenedAt: now
   });
 }

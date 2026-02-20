@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+import { recordAppActivity } from '../activity/log';
 
 export type MintVisibility = 'whitelist' | 'public';
 export type ReminderOffsetMinutes = 60 | 30 | 10;
@@ -119,6 +120,9 @@ function buildReminderRecords(
 
 export async function createMint(draft: MintDraft) {
   const now = Date.now();
+  const mintName = draft.name.trim() || 'Untitled mint';
+  const chain = draft.chain.trim() || 'Unknown chain';
+  const reminderCount = new Set(draft.reminderOffsets).size;
   await mintDB.transaction('rw', mintDB.mints, mintDB.reminders, async () => {
     const mintId = await mintDB.mints.add({
       remoteId: null,
@@ -142,10 +146,21 @@ export async function createMint(draft: MintDraft) {
       await mintDB.reminders.bulkAdd(reminders);
     }
   });
+
+  await recordAppActivity({
+    source: 'mint_tracker',
+    action: 'create_mint',
+    title: 'Mint added',
+    detail: `${mintName} | ${chain} | ${draft.visibility} | reminders ${reminderCount}`,
+    happenedAt: now
+  });
 }
 
 export async function updateMint(id: number, draft: MintDraft) {
   const now = Date.now();
+  const mintName = draft.name.trim() || 'Untitled mint';
+  const chain = draft.chain.trim() || 'Unknown chain';
+  let updated = false;
   await mintDB.transaction('rw', mintDB.mints, mintDB.reminders, async () => {
     const existing = await mintDB.mints.get(id);
     if (!existing) return;
@@ -168,13 +183,27 @@ export async function updateMint(id: number, draft: MintDraft) {
     if (reminders.length > 0) {
       await mintDB.reminders.bulkAdd(reminders);
     }
+    updated = true;
+  });
+
+  if (!updated) return;
+  await recordAppActivity({
+    source: 'mint_tracker',
+    action: 'update_mint',
+    title: 'Mint updated',
+    detail: `${mintName} | ${chain} | ${draft.visibility}`,
+    happenedAt: now
   });
 }
 
 export async function removeMint(id: number) {
+  let removedMintName = '';
+  let pendingRemoteDelete = false;
+  const now = Date.now();
   await mintDB.transaction('rw', mintDB.mints, mintDB.reminders, async () => {
     const existing = await mintDB.mints.get(id);
     if (!existing) return;
+    removedMintName = existing.name.trim() || 'Untitled mint';
 
     await mintDB.reminders.where('mintId').equals(id).delete();
 
@@ -185,9 +214,19 @@ export async function removeMint(id: number) {
         deletedAt: Date.now(),
         updatedAt: Date.now()
       });
+      pendingRemoteDelete = true;
       return;
     }
 
     await mintDB.mints.delete(id);
+  });
+
+  if (!removedMintName) return;
+  await recordAppActivity({
+    source: 'mint_tracker',
+    action: 'remove_mint',
+    title: pendingRemoteDelete ? 'Mint scheduled for deletion' : 'Mint removed',
+    detail: removedMintName,
+    happenedAt: now
   });
 }
