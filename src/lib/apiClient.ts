@@ -1,6 +1,7 @@
 import { auth } from './firebase';
+import { resolveApiBaseUrl } from './apiBaseUrl';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api';
+const API_BASE_URL = resolveApiBaseUrl();
 
 export class ApiRequestError extends Error {
   status: number | null;
