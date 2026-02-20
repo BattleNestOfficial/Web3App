@@ -1,7 +1,7 @@
-import { auth } from '../../lib/firebase';
+import { apiRequest } from '../../lib/apiClient';
 import type { MintRecord, MintVisibility } from './db';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api';
+export { ApiRequestError } from '../../lib/apiClient';
 
 type BackendMint = {
   id: number;
@@ -44,23 +44,6 @@ type MintUpsertPayload = {
   reminderOffsets: number[];
 };
 
-export class ApiRequestError extends Error {
-  status: number | null;
-  constructor(message: string, status: number | null = null) {
-    super(message);
-    this.name = 'ApiRequestError';
-    this.status = status;
-  }
-}
-
-async function getAuthToken() {
-  const user = auth.currentUser;
-  if (!user) {
-    throw new ApiRequestError('Authentication required to sync mints.', 401);
-  }
-  return user.getIdToken();
-}
-
 function normalizeRemoteMint(input: BackendMint): RemoteMint {
   return {
     remoteId: input.id,
@@ -76,70 +59,37 @@ function normalizeRemoteMint(input: BackendMint): RemoteMint {
   };
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-    throw new ApiRequestError('You are offline.', 0);
-  }
-
-  const token = await getAuthToken();
-  let response: Response;
-
-  try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...(init?.headers ?? {})
-      }
-    });
-  } catch {
-    throw new ApiRequestError('Network error while contacting backend.', 0);
-  }
-
-  if (!response.ok) {
-    let message = `Request failed with status ${response.status}`;
-    try {
-      const body = (await response.json()) as { error?: { message?: string } };
-      message = body.error?.message ?? message;
-    } catch {
-      // Ignore JSON parsing errors for non-JSON responses.
-    }
-    throw new ApiRequestError(message, response.status);
-  }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return (await response.json()) as T;
-}
-
 export async function fetchRemoteMints() {
-  const response = await request<BackendResponse<BackendMint[]>>('/mints');
+  const response = await apiRequest<BackendResponse<BackendMint[]>>('/mints', undefined, { retries: 1 });
   return response.data.map(normalizeRemoteMint);
 }
 
 export async function createRemoteMint(payload: MintUpsertPayload) {
-  const response = await request<BackendResponse<BackendMint>>('/mints', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
+  const response = await apiRequest<BackendResponse<BackendMint>>(
+    '/mints',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    },
+    { retries: 1 }
+  );
   return normalizeRemoteMint(response.data);
 }
 
 export async function updateRemoteMint(remoteId: number, payload: MintUpsertPayload) {
-  const response = await request<BackendResponse<BackendMint>>(`/mints/${remoteId}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
+  const response = await apiRequest<BackendResponse<BackendMint>>(
+    `/mints/${remoteId}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    },
+    { retries: 1 }
+  );
   return normalizeRemoteMint(response.data);
 }
 
 export async function deleteRemoteMint(remoteId: number) {
-  await request<void>(`/mints/${remoteId}`, {
-    method: 'DELETE'
-  });
+  await apiRequest<void>(`/mints/${remoteId}`, { method: 'DELETE' }, { retries: 1 });
 }
 
 export function toMintPayload(mint: MintRecord, reminderOffsets: number[]): MintUpsertPayload {

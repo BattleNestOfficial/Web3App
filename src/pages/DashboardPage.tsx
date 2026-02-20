@@ -291,11 +291,11 @@ export function DashboardPage() {
       <motion.header
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35 }}
+        transition={{ type: 'spring', stiffness: 170, damping: 24 }}
         className="mb-6"
       >
         <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Dashboard</p>
-        <h2 className="mt-1 font-display text-2xl text-white sm:text-3xl">Welcome back, Operator</h2>
+        <h2 className="text-gradient mt-1 font-display text-2xl sm:text-3xl">Welcome back, Operator</h2>
       </motion.header>
 
       <motion.div variants={container} initial="hidden" animate="show" className="grid gap-4 lg:grid-cols-12">

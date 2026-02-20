@@ -1,7 +1,7 @@
-import { auth } from '../../lib/firebase';
+import { apiRequest } from '../../lib/apiClient';
 import type { FarmingProjectRecord, FarmingTask } from './db';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api';
+export { ApiRequestError } from '../../lib/apiClient';
 
 type BackendTask = {
   id: string;
@@ -49,15 +49,6 @@ type FarmingProjectUpsertPayload = {
   progress: number;
 };
 
-export class ApiRequestError extends Error {
-  status: number | null;
-  constructor(message: string, status: number | null = null) {
-    super(message);
-    this.name = 'ApiRequestError';
-    this.status = status;
-  }
-}
-
 function normalizeTasks(tasks: BackendTask[] | FarmingTask[]) {
   return tasks
     .map((task) => ({
@@ -66,14 +57,6 @@ function normalizeTasks(tasks: BackendTask[] | FarmingTask[]) {
       completed: Boolean(task.completed)
     }))
     .filter((task) => task.id && task.title);
-}
-
-async function getAuthToken() {
-  const user = auth.currentUser;
-  if (!user) {
-    throw new ApiRequestError('Authentication required to sync farming projects.', 401);
-  }
-  return user.getIdToken();
 }
 
 function normalizeRemoteProject(input: BackendFarmingProject): RemoteFarmingProject {
@@ -91,70 +74,37 @@ function normalizeRemoteProject(input: BackendFarmingProject): RemoteFarmingProj
   };
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-    throw new ApiRequestError('You are offline.', 0);
-  }
-
-  const token = await getAuthToken();
-  let response: Response;
-
-  try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...(init?.headers ?? {})
-      }
-    });
-  } catch {
-    throw new ApiRequestError('Network error while contacting backend.', 0);
-  }
-
-  if (!response.ok) {
-    let message = `Request failed with status ${response.status}`;
-    try {
-      const body = (await response.json()) as { error?: { message?: string } };
-      message = body.error?.message ?? message;
-    } catch {
-      // Ignore JSON parsing errors for non-JSON responses.
-    }
-    throw new ApiRequestError(message, response.status);
-  }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return (await response.json()) as T;
-}
-
 export async function fetchRemoteProjects() {
-  const response = await request<BackendResponse<BackendFarmingProject[]>>('/farming');
+  const response = await apiRequest<BackendResponse<BackendFarmingProject[]>>('/farming', undefined, { retries: 1 });
   return response.data.map(normalizeRemoteProject);
 }
 
 export async function createRemoteProject(payload: FarmingProjectUpsertPayload) {
-  const response = await request<BackendResponse<BackendFarmingProject>>('/farming', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  });
+  const response = await apiRequest<BackendResponse<BackendFarmingProject>>(
+    '/farming',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    },
+    { retries: 1 }
+  );
   return normalizeRemoteProject(response.data);
 }
 
 export async function updateRemoteProject(remoteId: number, payload: FarmingProjectUpsertPayload) {
-  const response = await request<BackendResponse<BackendFarmingProject>>(`/farming/${remoteId}`, {
-    method: 'PUT',
-    body: JSON.stringify(payload)
-  });
+  const response = await apiRequest<BackendResponse<BackendFarmingProject>>(
+    `/farming/${remoteId}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    },
+    { retries: 1 }
+  );
   return normalizeRemoteProject(response.data);
 }
 
 export async function deleteRemoteProject(remoteId: number) {
-  await request<void>(`/farming/${remoteId}`, {
-    method: 'DELETE'
-  });
+  await apiRequest<void>(`/farming/${remoteId}`, { method: 'DELETE' }, { retries: 1 });
 }
 
 export function toProjectPayload(project: FarmingProjectRecord): FarmingProjectUpsertPayload {

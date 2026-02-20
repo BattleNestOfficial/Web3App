@@ -5,12 +5,12 @@ import { AuthPage } from '../pages/AuthPage';
 import { BugTrackerPage } from '../pages/BugTrackerPage';
 import { DashboardPage } from '../pages/DashboardPage';
 import { FarmingTrackerPage } from '../pages/FarmingTrackerPage';
-import { JournalPage } from '../pages/JournalPage';
 import { MintTrackerPage } from '../pages/MintTrackerPage';
 import { NotFoundPage } from '../pages/NotFoundPage';
 import { ProductivityPage } from '../pages/ProductivityPage';
 import { ProjectsPage } from '../pages/ProjectsPage';
 import { SettingsPage } from '../pages/SettingsPage';
+import { TodoPage } from '../pages/TodoPage';
 import { ProtectedRoute } from './routes/ProtectedRoute';
 
 export const router = createBrowserRouter([
@@ -49,8 +49,12 @@ export const router = createBrowserRouter([
             element: <ProductivityPage />
           },
           {
+            path: '/todo',
+            element: <TodoPage />
+          },
+          {
             path: '/journal',
-            element: <JournalPage />
+            element: <Navigate to="/todo" replace />
           },
           {
             path: '/bugs',

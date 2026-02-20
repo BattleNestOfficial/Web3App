@@ -6,6 +6,11 @@
 
 :root {
   color-scheme: dark;
+  --bg-0: #05050a;
+  --bg-1: #0b1022;
+  --bg-2: #0a1229;
+  --panel-glass: rgba(16, 20, 39, 0.8);
+  --line-soft: rgba(148, 163, 184, 0.14);
 }
 
 * {
@@ -21,8 +26,15 @@ body,
 body {
   margin: 0;
   font-family: 'Manrope', sans-serif;
-  background: #05050a;
+  background-color: var(--bg-0);
+  background-image:
+    radial-gradient(80rem 35rem at 12% -10%, rgba(45, 247, 204, 0.1), transparent 60%),
+    radial-gradient(60rem 30rem at 95% -15%, rgba(0, 163, 255, 0.11), transparent 65%),
+    linear-gradient(180deg, var(--bg-1), var(--bg-0) 45%, var(--bg-2));
   color: #f8fafc;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 ::-webkit-scrollbar {
@@ -34,3 +46,41 @@ body {
   border-radius: 999px;
 }
 
+.ambient-grid {
+  background-image:
+    linear-gradient(to right, var(--line-soft) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--line-soft) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: radial-gradient(circle at 50% 45%, black 38%, transparent 85%);
+}
+
+.glow-ring {
+  box-shadow:
+    0 0 0 1px rgba(45, 247, 204, 0.35),
+    0 0 20px rgba(45, 247, 204, 0.22),
+    0 0 36px rgba(0, 163, 255, 0.14);
+}
+
+.glass-panel {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: var(--panel-glass);
+  backdrop-filter: blur(16px);
+}
+
+.text-gradient {
+  background: linear-gradient(115deg, rgba(45, 247, 204, 0.95), rgba(0, 163, 255, 0.95));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

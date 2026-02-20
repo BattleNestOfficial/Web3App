@@ -4,6 +4,7 @@ import { Chrome } from 'lucide-react';
 import { FormEvent, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../app/providers/AuthProvider';
+import { AmbientBackground } from '../components/layout/AmbientBackground';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 
@@ -71,12 +72,12 @@ export function AuthPage() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-base p-6 text-slate-100">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(45,247,204,0.2),transparent_32%),radial-gradient(circle_at_80%_0%,rgba(0,163,255,0.2),transparent_24%)]" />
+      <AmbientBackground dense />
 
       <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25 }}
+        initial={{ opacity: 0, y: 16, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ type: 'spring', stiffness: 180, damping: 22, mass: 0.8 }}
         className="relative w-full max-w-md rounded-3xl border border-slate-700/60 bg-panel/90 p-7 shadow-2xl backdrop-blur-xl"
       >
         <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Secure Access</p>

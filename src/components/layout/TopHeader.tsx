@@ -1,6 +1,7 @@
 import { LogOut } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../app/providers/AuthProvider';
 import { usePwaInstall } from '../../hooks/usePwaInstall';
 import { Button } from '../ui/Button';
@@ -16,11 +17,52 @@ function getInitials(nameOrEmail: string) {
   return (tokens[0][0] + tokens[1][0]).toUpperCase();
 }
 
+function getPageMeta(pathname: string) {
+  if (pathname.startsWith('/dashboard')) return { title: 'Operations Hub', subtitle: 'Realtime overview' };
+  if (pathname.startsWith('/analytics')) return { title: 'Analytics Matrix', subtitle: 'Behavior + trend intelligence' };
+  if (pathname.startsWith('/mints')) return { title: 'Mint Tracker', subtitle: 'Mints, reminders, countdowns' };
+  if (pathname.startsWith('/farming')) return { title: 'Farming Tracker', subtitle: 'Claims, rewards, project progress' };
+  if (pathname.startsWith('/productivity')) return { title: 'Productivity', subtitle: 'Tasks and board execution flow' };
+  if (pathname.startsWith('/todo')) return { title: 'To-Do', subtitle: 'Personal task execution center' };
+  if (pathname.startsWith('/bugs')) return { title: 'Bug Tracker', subtitle: 'Issue lifecycle and triage flow' };
+  if (pathname.startsWith('/projects')) return { title: 'Projects', subtitle: 'Project-level workspace control' };
+  if (pathname.startsWith('/settings')) return { title: 'Settings', subtitle: 'Configuration and account controls' };
+  return { title: 'Neon Console', subtitle: 'Mission control' };
+}
+
 export function TopHeader({ leadingAction }: TopHeaderProps) {
   const { user, signOutUser } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { canInstall, promptInstall } = usePwaInstall();
   const displayName = user?.displayName || user?.email || 'User';
+  const [utcNow, setUtcNow] = useState(() => new Date());
+  const [isOnline, setIsOnline] = useState(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+
+  const pageMeta = useMemo(() => getPageMeta(location.pathname), [location.pathname]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setUtcNow(new Date());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
 
   return (
     <header className="fixed inset-x-0 top-0 z-20 border-b border-slate-800/70 bg-base/70 backdrop-blur-xl md:left-72">
@@ -28,12 +70,19 @@ export function TopHeader({ leadingAction }: TopHeaderProps) {
         <div className="flex items-center gap-3">
           {leadingAction}
           <div>
-            <p className="font-display text-lg text-white">Operations Hub</p>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Layout + routing baseline</p>
+            <p className="font-display text-lg text-white">{pageMeta.title}</p>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{pageMeta.subtitle}</p>
           </div>
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
+          <div className="hidden items-center gap-3 rounded-2xl border border-slate-700/70 bg-panel/70 px-3 py-2 lg:flex">
+            <span className={`h-2 w-2 rounded-full ${isOnline ? 'bg-emerald-300' : 'bg-rose-300'}`} />
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-300">
+              {isOnline ? 'Online' : 'Offline'} | UTC {utcNow.toLocaleTimeString('en-GB', { hour12: false })}
+            </p>
+          </div>
+
           {canInstall && (
             <Button variant="secondary" onClick={promptInstall}>
               Install App
@@ -41,7 +90,7 @@ export function TopHeader({ leadingAction }: TopHeaderProps) {
           )}
 
           <div className="flex items-center gap-3 rounded-2xl border border-slate-700/70 bg-panel px-3 py-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-glow/40 to-accent/40 text-xs font-semibold text-white">
+            <div className="glow-ring flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-glow/40 to-accent/40 text-xs font-semibold text-white">
               {getInitials(displayName)}
             </div>
             <div className="text-left">
