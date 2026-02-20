@@ -33,7 +33,7 @@ export function AuthProvider({ children }: Props) {
 
   useEffect(() => {
     let mounted = true;
-    let unsubscribe = () => undefined;
+    let unsubscribe: () => void = () => {};
 
     (async () => {
       try {
