@@ -483,9 +483,9 @@ export function DashboardPage() {
       }
     }
 
-    const reminderItems: CompanionAgendaItem[] = localReminders
+    const reminderItems = localReminders
       .filter((reminder) => reminder.remindAt >= dayBounds.start && reminder.remindAt <= dayBounds.end)
-      .map((reminder) => {
+      .map((reminder): CompanionAgendaItem | null => {
         const mint = mintsById.get(reminder.mintId);
         if (!mint) return null;
 
@@ -499,7 +499,7 @@ export function DashboardPage() {
           title: `${mint.name} reminder`,
           detail: `${formatReminderOffset(reminder.offsetMinutes)} before ${mint.visibility} mint on ${mint.chain}`,
           at: reminder.remindAt
-        } satisfies CompanionAgendaItem;
+        };
       })
       .filter((item): item is CompanionAgendaItem => item !== null);
 
