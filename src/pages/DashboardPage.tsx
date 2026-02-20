@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import { useAuth } from '../app/providers/AuthProvider';
 import { fetchAlphaFeed, syncAlphaFeed, type AlphaFeedMeta, type AlphaTweet } from '../features/alphaFeed/api';
 import {
   extractMintDetailsWithAi,
@@ -30,7 +31,7 @@ import {
 } from '../features/marketplaceMints/api';
 import { buildTrackedActivityEntries, type TrackedActivityEntry } from '../features/activity/stream';
 import { mintDB } from '../features/mints/db';
-import { todoDB, type TodoTaskRecord } from '../features/todo/db';
+import { todoDB, toggleTodoTask, type TodoTaskRecord } from '../features/todo/db';
 import { fetchWalletActivityEvents } from '../features/walletTracker/api';
 import { Button } from '../components/ui/Button';
 
@@ -53,6 +54,20 @@ const item = {
     y: 0,
     transition: { duration: 0.4, ease: 'easeOut' as const }
   }
+};
+
+type CompanionAgendaKind = 'task' | 'mint' | 'reminder';
+type CompanionAgendaStatus = 'pending' | 'done' | 'overdue' | 'live';
+
+type CompanionAgendaItem = {
+  id: string;
+  kind: CompanionAgendaKind;
+  status: CompanionAgendaStatus;
+  title: string;
+  detail: string;
+  at: number | null;
+  taskId?: number;
+  taskDone?: boolean;
 };
 
 function GlassCard({
@@ -81,6 +96,7 @@ function GlassCard({
 }
 
 export function DashboardPage() {
+  const { user } = useAuth();
   const [alphaTweets, setAlphaTweets] = useState<AlphaTweet[]>([]);
   const [alphaMeta, setAlphaMeta] = useState<AlphaFeedMeta | null>(null);
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
@@ -103,13 +119,17 @@ export function DashboardPage() {
   const [activityTimeline, setActivityTimeline] = useState<TrackedActivityEntry[]>([]);
   const [isActivityLoading, setIsActivityLoading] = useState(true);
   const [activityError, setActivityError] = useState('');
+  const [companionError, setCompanionError] = useState('');
+  const [updatingTaskId, setUpdatingTaskId] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const todoTasks = useLiveQuery(async () => todoDB.tasks.toArray(), []);
   const mintRows = useLiveQuery(
     async () => (await mintDB.mints.toArray()).filter((mint) => mint.deletedAt === null),
     []
   );
+  const reminderRows = useLiveQuery(async () => mintDB.reminders.toArray(), []);
   const localMints = useMemo(() => mintRows ?? [], [mintRows]);
+  const localReminders = useMemo(() => reminderRows ?? [], [reminderRows]);
 
   const accountFilterKey = useMemo(() => selectedAccounts.join('|'), [selectedAccounts]);
   const keywordFilterKey = useMemo(() => selectedKeywords.join('|'), [selectedKeywords]);
@@ -358,13 +378,14 @@ export function DashboardPage() {
   const configuredAccounts = alphaMeta?.configuredAccounts ?? [];
   const configuredKeywords = alphaMeta?.configuredKeywords?.length ? alphaMeta.configuredKeywords : defaultKeywords;
   const nextMarketplaceMint = calendarItems[0] ?? null;
+  const operatorName = useMemo(
+    () => resolveOperatorName(user?.displayName ?? null, user?.email ?? null),
+    [user?.displayName, user?.email]
+  );
+  const dayBounds = useMemo(() => getIstDayBounds(nowTick), [nowTick]);
   const tasksToday = useMemo(() => {
     const tasks = [...(todoTasks ?? [])];
     if (tasks.length === 0) return [];
-
-    const now = new Date(nowTick);
-    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const dayEnd = dayStart + 24 * 60 * 60 * 1000 - 1;
 
     const sortTasks = (rows: TodoTaskRecord[]) =>
       rows.sort((a, b) => {
@@ -375,13 +396,110 @@ export function DashboardPage() {
         return b.updatedAt - a.updatedAt;
       });
 
-    const dueToday = sortTasks(tasks.filter((task) => task.dueAt !== null && task.dueAt >= dayStart && task.dueAt <= dayEnd));
+    const dueToday = sortTasks(
+      tasks.filter((task) => task.dueAt !== null && task.dueAt >= dayBounds.start && task.dueAt <= dayBounds.end)
+    );
     if (dueToday.length > 0) {
       return dueToday.slice(0, 6);
     }
 
     return sortTasks(tasks).slice(0, 6);
-  }, [todoTasks, nowTick]);
+  }, [todoTasks, dayBounds.end, dayBounds.start]);
+
+  const companionAgenda = useMemo(() => {
+    const mintsById = new Map<number, (typeof localMints)[number]>();
+    for (const mint of localMints) {
+      if (mint.id) {
+        mintsById.set(mint.id, mint);
+      }
+    }
+
+    const reminderItems: CompanionAgendaItem[] = localReminders
+      .filter((reminder) => reminder.remindAt >= dayBounds.start && reminder.remindAt <= dayBounds.end)
+      .map((reminder) => {
+        const mint = mintsById.get(reminder.mintId);
+        if (!mint) return null;
+
+        const status: CompanionAgendaStatus =
+          reminder.triggeredAt !== null ? 'done' : reminder.remindAt < nowTick ? 'overdue' : 'pending';
+
+        return {
+          id: `reminder-${reminder.id ?? `${reminder.mintId}-${reminder.remindAt}`}`,
+          kind: 'reminder',
+          status,
+          title: `${mint.name} reminder`,
+          detail: `${formatReminderOffset(reminder.offsetMinutes)} before ${mint.visibility} mint on ${mint.chain}`,
+          at: reminder.remindAt
+        } satisfies CompanionAgendaItem;
+      })
+      .filter((item): item is CompanionAgendaItem => item !== null);
+
+    const mintItems: CompanionAgendaItem[] = localMints
+      .filter((mint) => mint.mintAt >= dayBounds.start && mint.mintAt <= dayBounds.end)
+      .map((mint) => ({
+        id: `mint-${mint.id ?? mint.clientId}`,
+        kind: 'mint',
+        status: mint.mintAt <= nowTick ? 'live' : 'pending',
+        title: `${mint.name} mint window`,
+        detail: `${mint.visibility === 'whitelist' ? 'Whitelist' : 'Public'} mint on ${mint.chain}`,
+        at: mint.mintAt
+      }));
+
+    const tasks = [...(todoTasks ?? [])];
+    const scheduledTasks = tasks.filter(
+      (task) => task.dueAt !== null && task.dueAt >= dayBounds.start && task.dueAt <= dayBounds.end
+    );
+    const unscheduledTasks = tasks.filter((task) => !task.done && task.dueAt === null).slice(0, 3);
+    const tasksForAgenda = scheduledTasks.length > 0 ? scheduledTasks : unscheduledTasks;
+
+    const taskItems: CompanionAgendaItem[] = tasksForAgenda.map((task) => ({
+      id: `task-${task.id ?? `${task.title}-${task.updatedAt}`}`,
+      kind: 'task',
+      status: task.done ? 'done' : task.dueAt !== null && task.dueAt < nowTick ? 'overdue' : 'pending',
+      title: task.title,
+      detail:
+        task.dueAt !== null
+          ? `${priorityLabel(task.priority)} priority task due today`
+          : `${priorityLabel(task.priority)} priority task without specific time`,
+      at: task.dueAt,
+      taskId: task.id,
+      taskDone: task.done
+    }));
+
+    return [...reminderItems, ...mintItems, ...taskItems]
+      .sort((a, b) => {
+        if (a.at !== null && b.at !== null && a.at !== b.at) return a.at - b.at;
+        if (a.at !== null && b.at === null) return -1;
+        if (a.at === null && b.at !== null) return 1;
+
+        const rankA = agendaKindSortRank(a.kind);
+        const rankB = agendaKindSortRank(b.kind);
+        if (rankA !== rankB) return rankA - rankB;
+        return a.title.localeCompare(b.title);
+      })
+      .slice(0, 12);
+  }, [dayBounds.end, dayBounds.start, localMints, localReminders, nowTick, todoTasks]);
+
+  const pendingCompanionCount = useMemo(
+    () => companionAgenda.filter((item) => item.status !== 'done').length,
+    [companionAgenda]
+  );
+  const nextCompanionItem = useMemo(
+    () => companionAgenda.find((item) => item.status !== 'done') ?? companionAgenda[0] ?? null,
+    [companionAgenda]
+  );
+
+  async function handleToggleTaskFromCompanion(taskId: number, done: boolean) {
+    setCompanionError('');
+    setUpdatingTaskId(taskId);
+    try {
+      await toggleTodoTask(taskId, !done);
+    } catch (error) {
+      setCompanionError(error instanceof Error ? error.message : 'Unable to update task.');
+    } finally {
+      setUpdatingTaskId(null);
+    }
+  }
 
   return (
     <section className="mx-auto max-w-7xl">
@@ -392,7 +510,7 @@ export function DashboardPage() {
         className="mb-6"
       >
         <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Dashboard</p>
-        <h2 className="text-gradient mt-1 font-display text-2xl sm:text-3xl">Welcome back, Operator</h2>
+        <h2 className="text-gradient mt-1 font-display text-2xl sm:text-3xl">Welcome back, {operatorName}</h2>
       </motion.header>
 
       <motion.div variants={container} initial="hidden" animate="show" className="grid gap-4 lg:grid-cols-12">
@@ -490,49 +608,92 @@ export function DashboardPage() {
           )}
         </GlassCard>
 
-        <GlassCard title="AI Daily Productivity Summary" icon={<Brain className="h-4 w-4" />} className="lg:col-span-4">
-          {isAiLoadingDailySummary ? (
-            <p className="text-sm text-slate-300">Generating daily summary...</p>
-          ) : dailySummaryError ? (
-            <div className="rounded-xl border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm text-rose-200">
-              {dailySummaryError}
+        <GlassCard title="AI Mission Companion" icon={<Brain className="h-4 w-4" />} className="lg:col-span-4">
+          <div className="rounded-2xl border border-cyan-300/25 bg-cyan-300/10 p-3">
+            <p className="text-sm font-medium text-cyan-100">{buildCompanionGreeting(operatorName, nowTick)}</p>
+            <p className="mt-1 text-xs text-cyan-200/90">
+              {formatIstDateHeadline(nowTick)} | {pendingCompanionCount} action{pendingCompanionCount === 1 ? '' : 's'} queued.
+            </p>
+            <p className="mt-2 text-xs text-slate-200">
+              {nextCompanionItem
+                ? `Next up: ${nextCompanionItem.title}${nextCompanionItem.at ? ` at ${formatIstTime(nextCompanionItem.at)}` : ' anytime'}`
+                : 'No scheduled actions for today. Add tasks or mints to build your day plan.'}
+            </p>
+          </div>
+
+          {companionError ? (
+            <div className="mt-3 rounded-xl border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm text-rose-200">
+              {companionError}
             </div>
+          ) : null}
+
+          {companionAgenda.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-300">No checklist for today yet.</p>
+          ) : (
+            <ol className="mt-3 space-y-2">
+              {companionAgenda.map((item) => (
+                <li
+                  key={item.id}
+                  className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2"
+                >
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span
+                        className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${companionKindBadgeClass(item.kind)}`}
+                      >
+                        {companionKindLabel(item.kind)}
+                      </span>
+                      <p className={`truncate text-sm ${item.status === 'done' ? 'text-slate-400 line-through' : 'text-slate-100'}`}>
+                        {item.title}
+                      </p>
+                    </div>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${companionStatusBadgeClass(item.status)}`}>
+                      {item.at !== null ? formatIstTime(item.at) : 'Anytime'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400">{item.detail}</p>
+                  {item.kind === 'task' && item.taskId ? (
+                    <div className="mt-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-8 px-2.5 text-xs"
+                        onClick={() => void handleToggleTaskFromCompanion(item.taskId!, Boolean(item.taskDone))}
+                        disabled={updatingTaskId === item.taskId}
+                      >
+                        {updatingTaskId === item.taskId
+                          ? 'Updating...'
+                          : item.taskDone
+                            ? 'Mark Pending'
+                            : 'Mark Done'}
+                      </Button>
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          )}
+
+          {isAiLoadingDailySummary ? (
+            <p className="mt-3 text-xs text-slate-400">Refreshing AI companion insights...</p>
+          ) : dailySummaryError ? (
+            <p className="mt-3 text-xs text-amber-200">{dailySummaryError}</p>
           ) : dailyAiSummary ? (
-            <div>
-              <p className="text-sm text-slate-200">{dailyAiSummary.summary}</p>
-              <p className="mt-2 text-xs text-slate-400">
-                Source: {dailyAiSummary.source.toUpperCase()} | Generated:{' '}
-                {new Date(dailyAiSummary.generatedAt).toLocaleString()}
-              </p>
-
+            <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+              <p className="text-xs uppercase tracking-[0.12em] text-slate-400">AI Insight</p>
+              <p className="mt-1 text-xs text-slate-200">{dailyAiSummary.summary}</p>
               {dailyAiSummary.focusItems.length > 0 ? (
-                <div className="mt-3">
-                  <p className="mb-1 text-xs uppercase tracking-[0.12em] text-slate-400">Focus</p>
-                  <ul className="space-y-1">
-                    {dailyAiSummary.focusItems.map((itemText, index) => (
-                      <li key={`focus-${index}`} className="text-xs text-slate-300">
-                        - {itemText}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                <p className="mt-2 text-xs text-cyan-200">Focus: {dailyAiSummary.focusItems.slice(0, 2).join(' | ')}</p>
               ) : null}
-
               {dailyAiSummary.riskItems.length > 0 ? (
-                <div className="mt-3">
-                  <p className="mb-1 text-xs uppercase tracking-[0.12em] text-slate-400">Risks</p>
-                  <ul className="space-y-1">
-                    {dailyAiSummary.riskItems.map((itemText, index) => (
-                      <li key={`risk-${index}`} className="text-xs text-slate-300">
-                        - {itemText}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                <p className="mt-1 text-xs text-amber-200">Watch: {dailyAiSummary.riskItems.slice(0, 2).join(' | ')}</p>
               ) : null}
+              <p className="mt-1 text-[11px] text-slate-400">
+                {dailyAiSummary.source.toUpperCase()} | {new Date(dailyAiSummary.generatedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
+              </p>
             </div>
           ) : (
-            <p className="text-sm text-slate-300">Summary unavailable.</p>
+            <p className="mt-3 text-xs text-slate-400">AI insight unavailable.</p>
           )}
         </GlassCard>
 
@@ -806,4 +967,81 @@ function formatCountdownParts(isoString: string, nowMs: number) {
     [String(minutes).padStart(2, '0'), 'Mins'],
     [String(seconds).padStart(2, '0'), 'Secs']
   ] as const;
+}
+
+function resolveOperatorName(displayName: string | null, email: string | null) {
+  const name = String(displayName ?? '').trim();
+  if (name) return name.split(/\s+/)[0];
+  const emailName = String(email ?? '').trim();
+  if (emailName.includes('@')) return emailName.split('@')[0];
+  return 'Operator';
+}
+
+function buildCompanionGreeting(operatorName: string, nowMs: number) {
+  const shifted = new Date(nowMs + 330 * 60 * 1000);
+  const hour = shifted.getUTCHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : hour < 22 ? 'Good evening' : 'Good night';
+  return `${greeting}, ${operatorName}. Let's execute today's mission.`;
+}
+
+function formatIstDateHeadline(timestamp: number) {
+  return new Date(timestamp).toLocaleDateString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short'
+  });
+}
+
+function formatIstTime(timestamp: number) {
+  return new Date(timestamp).toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
+}
+
+function priorityLabel(priority: TodoTaskRecord['priority']) {
+  if (priority === 'high') return 'High';
+  if (priority === 'medium') return 'Medium';
+  return 'Low';
+}
+
+function formatReminderOffset(minutes: number) {
+  if (minutes === 60) return '1h';
+  if (minutes === 30) return '30m';
+  return '10m';
+}
+
+function agendaKindSortRank(kind: CompanionAgendaKind) {
+  if (kind === 'reminder') return 0;
+  if (kind === 'mint') return 1;
+  return 2;
+}
+
+function companionKindLabel(kind: CompanionAgendaKind) {
+  if (kind === 'reminder') return 'Reminder';
+  if (kind === 'mint') return 'Mint';
+  return 'Task';
+}
+
+function companionKindBadgeClass(kind: CompanionAgendaKind) {
+  if (kind === 'reminder') return 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200';
+  if (kind === 'mint') return 'border-indigo-300/40 bg-indigo-300/10 text-indigo-200';
+  return 'border-amber-300/40 bg-amber-300/10 text-amber-200';
+}
+
+function companionStatusBadgeClass(status: CompanionAgendaStatus) {
+  if (status === 'done') return 'border border-emerald-300/40 bg-emerald-300/10 text-emerald-200';
+  if (status === 'overdue') return 'border border-rose-300/40 bg-rose-300/10 text-rose-200';
+  if (status === 'live') return 'border border-fuchsia-300/40 bg-fuchsia-300/10 text-fuchsia-200';
+  return 'border border-slate-500/50 bg-slate-500/10 text-slate-200';
+}
+
+function getIstDayBounds(timestamp: number) {
+  const offsetMs = 330 * 60 * 1000;
+  const shifted = new Date(timestamp + offsetMs);
+  const start = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()) - offsetMs;
+  return { start, end: start + 24 * 60 * 60 * 1000 - 1 };
 }
