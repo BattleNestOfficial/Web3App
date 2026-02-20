@@ -2,6 +2,7 @@ import { Navigate, createBrowserRouter } from 'react-router-dom';
 import { AppShell } from '../components/layout/AppShell';
 import { AuthPage } from '../pages/AuthPage';
 import { DashboardPage } from '../pages/DashboardPage';
+import { MintTrackerPage } from '../pages/MintTrackerPage';
 import { NotFoundPage } from '../pages/NotFoundPage';
 import { ProjectsPage } from '../pages/ProjectsPage';
 import { SettingsPage } from '../pages/SettingsPage';
@@ -25,6 +26,10 @@ export const router = createBrowserRouter([
           {
             path: '/dashboard',
             element: <DashboardPage />
+          },
+          {
+            path: '/mints',
+            element: <MintTrackerPage />
           },
           {
             path: '/projects',
