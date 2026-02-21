@@ -56,7 +56,6 @@ export type ApiCostPricing = {
   defaultCurrency: string;
   openAiInputPer1kUsd: number;
   openAiOutputPer1kUsd: number;
-  twitterRequestUsd: number;
   brevoEmailUsd: number;
   openseaRequestUsd: number;
   magicedenRequestUsd: number;

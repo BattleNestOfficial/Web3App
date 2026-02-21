@@ -1,29 +1,13 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { motion } from 'framer-motion';
-import {
-  AlertTriangle,
-  Brain,
-  CalendarClock,
-  CheckCircle2,
-  Clock3,
-  ExternalLink,
-  ListTodo,
-  RefreshCw,
-  Wand2
-} from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Brain, CalendarClock, CheckCircle2, Clock3, ExternalLink } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../app/providers/AuthProvider';
-import { fetchAlphaFeed, syncAlphaFeed, type AlphaFeedMeta, type AlphaTweet } from '../features/alphaFeed/api';
 import {
-  extractMintDetailsWithAi,
   fetchDailyProductivitySummaryWithAi,
-  generateFarmingTasksWithAi,
-  summarizeTweetsWithAi,
-  type DailyProductivitySummaryResult,
-  type FarmingTaskResult,
-  type MintExtractionResult,
-  type TweetSummaryResult
+  type DailyProductivitySummaryResult
 } from '../features/ai/api';
 import { listRecentAppActivityEvents } from '../features/activity/log';
 import { buildTrackedActivityEntries, type TrackedActivityEntry } from '../features/activity/stream';
@@ -31,8 +15,6 @@ import { mintDB } from '../features/mints/db';
 import { todoDB, toggleTodoTask, type TodoTaskRecord } from '../features/todo/db';
 import { fetchWalletActivityEvents, type WalletActivityEvent } from '../features/walletTracker/api';
 import { Button } from '../components/ui/Button';
-
-const defaultKeywords = ['mint', 'testnet', 'airdrop'];
 
 const container = {
   hidden: { opacity: 0 },
@@ -81,6 +63,19 @@ type JarvisBriefing = {
   nextAction: string;
 };
 
+type JarvisRiskLevel = 'critical' | 'watch' | 'info';
+
+type JarvisRiskAlert = {
+  id: string;
+  level: JarvisRiskLevel;
+  message: string;
+};
+
+type JarvisRunbookItem = CompanionAgendaItem & {
+  priorityScore: number;
+  etaLabel: string;
+};
+
 function GlassCard({
   title,
   icon,
@@ -108,29 +103,31 @@ function GlassCard({
 
 export function DashboardPage() {
   const { user } = useAuth();
-  const [alphaTweets, setAlphaTweets] = useState<AlphaTweet[]>([]);
-  const [alphaMeta, setAlphaMeta] = useState<AlphaFeedMeta | null>(null);
-  const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
-  const [selectedKeywords, setSelectedKeywords] = useState<string[]>(defaultKeywords);
-  const [isFeedLoading, setIsFeedLoading] = useState(true);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [feedError, setFeedError] = useState('');
-  const [syncMessage, setSyncMessage] = useState('');
-  const [aiSummary, setAiSummary] = useState<TweetSummaryResult | null>(null);
-  const [aiTasks, setAiTasks] = useState<FarmingTaskResult | null>(null);
-  const [aiMintByTweetId, setAiMintByTweetId] = useState<Record<string, MintExtractionResult>>({});
+  const navigate = useNavigate();
   const [dailyAiSummary, setDailyAiSummary] = useState<DailyProductivitySummaryResult | null>(null);
   const [dailySummaryError, setDailySummaryError] = useState('');
-  const [isAiSummarizing, setIsAiSummarizing] = useState(false);
-  const [isAiGeneratingTasks, setIsAiGeneratingTasks] = useState(false);
   const [isAiLoadingDailySummary, setIsAiLoadingDailySummary] = useState(false);
-  const [extractingTweetId, setExtractingTweetId] = useState<string | null>(null);
   const [walletTimelineEvents, setWalletTimelineEvents] = useState<WalletActivityEvent[]>([]);
   const [isActivityLoading, setIsActivityLoading] = useState(true);
   const [activityError, setActivityError] = useState('');
   const [companionError, setCompanionError] = useState('');
   const [updatingTaskId, setUpdatingTaskId] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
+  const [jarvisAutomationEnabled, setJarvisAutomationEnabled] = useState(() =>
+    readPersistedFlag('jarvis_automation_enabled', true)
+  );
+  const [jarvisNotificationsEnabled, setJarvisNotificationsEnabled] = useState(() =>
+    readPersistedFlag('jarvis_notifications_enabled', false)
+  );
+  const [jarvisNotificationPermission, setJarvisNotificationPermission] = useState<NotificationPermission>(
+    getBrowserNotificationPermission
+  );
+  const [jarvisAutoLog, setJarvisAutoLog] = useState('Automation idle.');
+  const [jarvisCommandInput, setJarvisCommandInput] = useState('');
+  const [jarvisCommandOutput, setJarvisCommandOutput] = useState('Command channel idle. Awaiting instruction.');
+  const [jarvisCommandHistory, setJarvisCommandHistory] = useState<string[]>([]);
+  const [isJarvisExecutingCommand, setIsJarvisExecutingCommand] = useState(false);
+  const jarvisNotifiedIdsRef = useRef(new Set<string>());
   const todoTasks = useLiveQuery(async () => todoDB.tasks.toArray(), []);
   const mintRows = useLiveQuery(
     async () => (await mintDB.mints.toArray()).filter((mint) => mint.deletedAt === null),
@@ -145,58 +142,6 @@ export function DashboardPage() {
     () => buildTrackedActivityEntries(walletTimelineEvents, localMints, appActivityEvents, 12),
     [appActivityEvents, localMints, walletTimelineEvents]
   );
-
-  const accountFilterKey = useMemo(() => selectedAccounts.join('|'), [selectedAccounts]);
-  const keywordFilterKey = useMemo(() => selectedKeywords.join('|'), [selectedKeywords]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadFeed(options: { showLoader: boolean; refresh: boolean }) {
-      if (options.showLoader) {
-        setIsFeedLoading(true);
-      }
-      setFeedError('');
-
-      try {
-        const response = await fetchAlphaFeed({
-          accounts: selectedAccounts,
-          keywords: selectedKeywords,
-          limit: 24,
-          refresh: options.refresh
-        });
-
-        if (!isMounted) return;
-        setAlphaTweets(response.data);
-        setAlphaMeta(response.meta);
-
-        const syncWarnings = response.meta.sync?.warnings ?? [];
-        const syncErrors = response.meta.sync?.errors ?? [];
-        if (syncWarnings.length > 0 || syncErrors.length > 0) {
-          setSyncMessage([...syncWarnings, ...syncErrors].join(' | '));
-        } else if (options.refresh) {
-          setSyncMessage('');
-        }
-      } catch (error) {
-        if (!isMounted) return;
-        setFeedError(error instanceof Error ? error.message : 'Failed to load alpha feed.');
-      } finally {
-        if (isMounted && options.showLoader) {
-          setIsFeedLoading(false);
-        }
-      }
-    }
-
-    void loadFeed({ showLoader: true, refresh: false });
-    const timer = window.setInterval(() => {
-      void loadFeed({ showLoader: false, refresh: true });
-    }, 45_000);
-
-    return () => {
-      isMounted = false;
-      window.clearInterval(timer);
-    };
-  }, [accountFilterKey, keywordFilterKey, selectedAccounts, selectedKeywords]);
 
   useEffect(() => {
     let isMounted = true;
@@ -266,118 +211,6 @@ export function DashboardPage() {
     return () => window.clearInterval(timer);
   }, []);
 
-  async function handleSync() {
-    setIsSyncing(true);
-    setFeedError('');
-    setSyncMessage('');
-
-    try {
-      const response = await syncAlphaFeed({
-        accounts: selectedAccounts,
-        keywords: selectedKeywords,
-        limit: 24
-      });
-      setAlphaTweets(response.data);
-      setAlphaMeta(response.meta);
-
-      const sync = response.meta.sync;
-      if (sync) {
-        const parts = [`Fetched ${sync.fetchedCount}`, `Stored ${sync.storedCount}`];
-        if (sync.warnings.length > 0) parts.push(sync.warnings.join(' '));
-        if (sync.errors.length > 0) parts.push(sync.errors.join(' '));
-        setSyncMessage(parts.join(' | '));
-      }
-    } catch (error) {
-      setFeedError(error instanceof Error ? error.message : 'Failed to sync alpha feed.');
-    } finally {
-      setIsSyncing(false);
-    }
-  }
-
-  async function handleAiSummarizeTweets() {
-    if (alphaTweets.length === 0) {
-      setAiSummary({ summary: 'No tweets available for summarization.', highlights: [] });
-      return;
-    }
-
-    setIsAiSummarizing(true);
-    setFeedError('');
-    try {
-      const response = await summarizeTweetsWithAi(
-        alphaTweets.map((tweet) => ({
-          text: tweet.text,
-          authorUsername: tweet.authorUsername
-        }))
-      );
-      setAiSummary(response);
-    } catch (error) {
-      setFeedError(error instanceof Error ? error.message : 'Failed to summarize tweets.');
-    } finally {
-      setIsAiSummarizing(false);
-    }
-  }
-
-  async function handleAiGenerateFarmingTasks() {
-    if (alphaTweets.length === 0) {
-      setAiTasks({ tasks: [] });
-      return;
-    }
-
-    setIsAiGeneratingTasks(true);
-    setFeedError('');
-    try {
-      const response = await generateFarmingTasksWithAi(
-        alphaTweets.map((tweet) => ({
-          text: tweet.text,
-          authorUsername: tweet.authorUsername
-        }))
-      );
-      setAiTasks(response);
-    } catch (error) {
-      setFeedError(error instanceof Error ? error.message : 'Failed to generate farming tasks.');
-    } finally {
-      setIsAiGeneratingTasks(false);
-    }
-  }
-
-  async function handleAiExtractMint(tweet: AlphaTweet) {
-    setExtractingTweetId(tweet.tweetId);
-    setFeedError('');
-    try {
-      const response = await extractMintDetailsWithAi(tweet.text);
-      setAiMintByTweetId((prev) => ({
-        ...prev,
-        [tweet.tweetId]: response
-      }));
-    } catch (error) {
-      setFeedError(error instanceof Error ? error.message : 'Failed to extract mint details.');
-    } finally {
-      setExtractingTweetId(null);
-    }
-  }
-
-  function toggleKeyword(keyword: string) {
-    setSelectedKeywords((prev) => {
-      const normalized = keyword.toLowerCase();
-      if (prev.some((item) => item.toLowerCase() === normalized)) {
-        return prev.filter((item) => item.toLowerCase() !== normalized);
-      }
-      return [...prev, keyword];
-    });
-  }
-
-  function toggleAccount(account: string) {
-    setSelectedAccounts((prev) => {
-      const normalized = account.toLowerCase();
-      if (prev.some((item) => item.toLowerCase() === normalized)) {
-        return prev.filter((item) => item.toLowerCase() !== normalized);
-      }
-      return [...prev, account];
-    });
-  }
-
-  const configuredAccounts = alphaMeta?.configuredAccounts ?? [];
-  const configuredKeywords = alphaMeta?.configuredKeywords?.length ? alphaMeta.configuredKeywords : defaultKeywords;
   const manualTrackedMints = useMemo(() => localMints.filter((mint) => mint.deletedAt === null), [localMints]);
   const nextTrackedMint = useMemo(
     () => manualTrackedMints.filter((mint) => mint.mintAt >= nowTick).sort((a, b) => a.mintAt - b.mintAt)[0] ?? null,
@@ -501,6 +334,80 @@ export function DashboardPage() {
     () => groupAgendaByIstWindow(actionableCompanionAgenda),
     [actionableCompanionAgenda]
   );
+  const jarvisRiskAlerts = useMemo(
+    () => buildJarvisRiskAlerts(actionableCompanionAgenda, nowTick, dailyAiSummary),
+    [actionableCompanionAgenda, dailyAiSummary, nowTick]
+  );
+  const jarvisRunbook = useMemo(
+    () => buildJarvisRunbook(actionableCompanionAgenda, nowTick),
+    [actionableCompanionAgenda, nowTick]
+  );
+  const jarvisPriorityStats = useMemo(
+    () => summarizeJarvisPriorities(actionableCompanionAgenda, nowTick),
+    [actionableCompanionAgenda, nowTick]
+  );
+
+  useEffect(() => {
+    persistFlag('jarvis_automation_enabled', jarvisAutomationEnabled);
+  }, [jarvisAutomationEnabled]);
+
+  useEffect(() => {
+    persistFlag('jarvis_notifications_enabled', jarvisNotificationsEnabled);
+  }, [jarvisNotificationsEnabled]);
+
+  useEffect(() => {
+    setJarvisNotificationPermission(getBrowserNotificationPermission());
+  }, []);
+
+  useEffect(() => {
+    if (!jarvisAutomationEnabled) {
+      setJarvisAutoLog('Automation paused.');
+      return;
+    }
+
+    const readySoon = actionableCompanionAgenda.filter((item) => {
+      if (item.at === null) return false;
+      const minutes = Math.floor((item.at - nowTick) / 60_000);
+      return minutes >= 0 && minutes <= 15;
+    });
+    const overdueItems = actionableCompanionAgenda.filter((item) => item.status === 'overdue');
+    setJarvisAutoLog(
+      `Auto-watch active | Critical now: ${overdueItems.length} | Starting in 15m: ${readySoon.length} | Runbook: ${jarvisRunbook.length} actions`
+    );
+
+    if (
+      !jarvisNotificationsEnabled ||
+      jarvisNotificationPermission !== 'granted' ||
+      typeof Notification === 'undefined'
+    ) {
+      return;
+    }
+
+    const notifyCandidates = [...overdueItems, ...readySoon].slice(0, 4);
+    for (const item of notifyCandidates) {
+      const dedupeKey =
+        item.status === 'overdue' ? `${item.id}:overdue` : `${item.id}:${Math.floor((item.at ?? 0) / 600_000)}`;
+      if (jarvisNotifiedIdsRef.current.has(dedupeKey)) continue;
+
+      const heading = item.status === 'overdue' ? `JARVIS Alert: Overdue ${companionKindLabel(item.kind)}` : `JARVIS Alert: ${companionKindLabel(item.kind)} in < 15m`;
+      const body =
+        item.at !== null ? `${item.title} at ${formatIstTime(item.at)} | ${item.detail}` : `${item.title} | ${item.detail}`;
+
+      try {
+        new Notification(heading, { body, tag: dedupeKey, renotify: false });
+        jarvisNotifiedIdsRef.current.add(dedupeKey);
+      } catch {
+        // Ignore notification failures to keep automation loop resilient.
+      }
+    }
+  }, [
+    actionableCompanionAgenda,
+    jarvisAutomationEnabled,
+    jarvisNotificationPermission,
+    jarvisNotificationsEnabled,
+    nowTick,
+    jarvisRunbook.length
+  ]);
 
   async function handleToggleTaskFromCompanion(taskId: number, done: boolean) {
     setCompanionError('');
@@ -511,6 +418,68 @@ export function DashboardPage() {
       setCompanionError(error instanceof Error ? error.message : 'Unable to update task.');
     } finally {
       setUpdatingTaskId(null);
+    }
+  }
+
+  async function handleEnableJarvisNotifications() {
+    if (typeof Notification === 'undefined') {
+      setJarvisAutoLog('Browser notifications are not supported in this environment.');
+      return;
+    }
+
+    try {
+      const permission = await Notification.requestPermission();
+      setJarvisNotificationPermission(permission);
+      if (permission === 'granted') {
+        setJarvisNotificationsEnabled(true);
+        setJarvisAutoLog('Automation alerts enabled.');
+      } else {
+        setJarvisNotificationsEnabled(false);
+        setJarvisAutoLog('Notification permission denied. Alerts disabled.');
+      }
+    } catch {
+      setJarvisAutoLog('Notification permission request failed.');
+    }
+  }
+
+  async function handleRunJarvisCommand(rawCommand: string) {
+    const command = rawCommand.trim();
+    if (!command) {
+      setJarvisCommandOutput('Command empty. Try: "automation on", "alerts on", or "open todo".');
+      return;
+    }
+
+    const normalized = command.toLowerCase();
+    setIsJarvisExecutingCommand(true);
+    setJarvisCommandHistory((prev) => [command, ...prev].slice(0, 5));
+
+    try {
+      if (matchesJarvisCommand(normalized, ['automation on', 'enable automation', 'autopilot on'])) {
+        setJarvisAutomationEnabled(true);
+        setJarvisCommandOutput('Autopilot enabled.');
+      } else if (matchesJarvisCommand(normalized, ['automation off', 'pause automation', 'autopilot off'])) {
+        setJarvisAutomationEnabled(false);
+        setJarvisCommandOutput('Autopilot paused.');
+      } else if (matchesJarvisCommand(normalized, ['alerts on', 'enable alerts', 'notification on'])) {
+        await handleEnableJarvisNotifications();
+        setJarvisCommandOutput('Alerts command executed. Check permission status above.');
+      } else if (normalized.includes('open') || normalized.includes('go to') || normalized.includes('goto')) {
+        const route = resolveJarvisRoute(normalized);
+        if (route) {
+          navigate(route);
+          setJarvisCommandOutput(`Navigating to ${route}.`);
+        } else {
+          setJarvisCommandOutput('Module not recognized. Try: open nft, open todo, open bugs, open api costs, open settings.');
+        }
+      } else {
+        setJarvisCommandOutput(
+          'Command not recognized. Try: "automation on/off", "alerts on", "open todo", "open nft", or "open settings".'
+        );
+      }
+    } catch (error) {
+      setJarvisCommandOutput(error instanceof Error ? error.message : 'Command execution failed.');
+    } finally {
+      setIsJarvisExecutingCommand(false);
     }
   }
 
@@ -643,6 +612,91 @@ export function DashboardPage() {
             <p className="mt-2 text-[11px] text-slate-300">
               This day plan is generated from your NFT Mint Tracker + Task Planner for the current IST day.
             </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span
+                className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                  jarvisAutomationEnabled
+                    ? 'border-emerald-300/40 bg-emerald-300/10 text-emerald-200'
+                    : 'border-slate-500/50 bg-slate-500/10 text-slate-200'
+                }`}
+              >
+                Automation {jarvisAutomationEnabled ? 'On' : 'Off'}
+              </span>
+              <span
+                className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                  jarvisNotificationsEnabled && jarvisNotificationPermission === 'granted'
+                    ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200'
+                    : 'border-slate-500/50 bg-slate-500/10 text-slate-200'
+                }`}
+              >
+                Alerts {jarvisNotificationsEnabled && jarvisNotificationPermission === 'granted' ? 'On' : 'Off'}
+              </span>
+              <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
+                Permission: {jarvisNotificationPermission}
+              </span>
+            </div>
+            <p className="mt-2 text-[11px] text-slate-300">{jarvisAutoLog}</p>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant={jarvisAutomationEnabled ? 'secondary' : 'ghost'}
+              className="h-8 px-2.5 text-xs"
+              onClick={() => setJarvisAutomationEnabled((prev) => !prev)}
+            >
+              {jarvisAutomationEnabled ? 'Pause Automation' : 'Enable Automation'}
+            </Button>
+            <Button
+              type="button"
+              variant={jarvisNotificationsEnabled ? 'secondary' : 'ghost'}
+              className="h-8 px-2.5 text-xs"
+              onClick={() => void handleEnableJarvisNotifications()}
+            >
+              {jarvisNotificationsEnabled ? 'Recheck Alerts Permission' : 'Enable Alerts'}
+            </Button>
+          </div>
+
+          <form
+            className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-2.5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const command = jarvisCommandInput;
+              setJarvisCommandInput('');
+              void handleRunJarvisCommand(command);
+            }}
+          >
+            <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Command Console</p>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+              <input
+                value={jarvisCommandInput}
+                onChange={(event) => setJarvisCommandInput(event.target.value)}
+                placeholder='Type command, e.g. "open todo"'
+                className="h-9 flex-1 rounded-lg border border-slate-700 bg-panelAlt px-3 text-sm text-slate-100 outline-none transition focus:border-cyan-300/45"
+              />
+              <Button type="submit" variant="secondary" className="h-9 px-3 text-xs" disabled={isJarvisExecutingCommand}>
+                {isJarvisExecutingCommand ? 'Executing...' : 'Execute'}
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-cyan-100">{jarvisCommandOutput}</p>
+            {jarvisCommandHistory.length > 0 ? (
+              <p className="mt-1 text-[11px] text-slate-400">Recent: {jarvisCommandHistory.join(' | ')}</p>
+            ) : null}
+          </form>
+
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-slate-400">Overdue</p>
+              <p className="mt-1 text-sm text-rose-200">{jarvisPriorityStats.overdueCount}</p>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-slate-400">Starts Under 60m</p>
+              <p className="mt-1 text-sm text-amber-200">{jarvisPriorityStats.underHourCount}</p>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-slate-400">High Priority Queue</p>
+              <p className="mt-1 text-sm text-cyan-200">{jarvisPriorityStats.highPriorityCount}</p>
+            </div>
           </div>
 
           {companionError ? (
@@ -650,6 +704,45 @@ export function DashboardPage() {
               {companionError}
             </div>
           ) : null}
+
+          <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+            <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Threat Matrix</p>
+            {jarvisRiskAlerts.length === 0 ? (
+              <p className="mt-1 text-xs text-slate-300">No immediate threats detected.</p>
+            ) : (
+              <ul className="mt-2 space-y-1.5">
+                {jarvisRiskAlerts.map((alert) => (
+                  <li key={alert.id} className="flex items-start justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-2">
+                    <p className="text-xs text-slate-200">{alert.message}</p>
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${jarvisRiskBadgeClass(alert.level)}`}>
+                      {alert.level}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+            <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Autopilot Runbook (Next 6 Hours)</p>
+            {jarvisRunbook.length === 0 ? (
+              <p className="mt-1 text-xs text-slate-300">No high-priority action in the next 6 hours.</p>
+            ) : (
+              <ol className="mt-2 space-y-1.5">
+                {jarvisRunbook.map((item) => (
+                  <li key={`runbook-${item.id}`} className="rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-xs text-slate-100">{item.title}</p>
+                      <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
+                        {item.etaLabel}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-slate-400">{item.detail}</p>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
 
           {jarvisTimeBuckets.some((bucket) => bucket.items.length > 0) ? (
             <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -736,213 +829,6 @@ export function DashboardPage() {
           )}
         </GlassCard>
 
-        <GlassCard title="Alpha Feed" icon={<Clock3 className="h-4 w-4" />} className="lg:col-span-12">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs uppercase tracking-[0.12em] text-slate-400">Accounts</span>
-              <button
-                type="button"
-                onClick={() => setSelectedAccounts([])}
-                className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-wide ${
-                  selectedAccounts.length === 0
-                    ? 'border-glow/60 bg-glow/10 text-white'
-                    : 'border-slate-700 text-slate-300 hover:text-white'
-                }`}
-              >
-                All configured
-              </button>
-              {configuredAccounts.map((account) => {
-                const active = selectedAccounts.some((item) => item.toLowerCase() === account.toLowerCase());
-                return (
-                  <button
-                    key={account}
-                    type="button"
-                    onClick={() => toggleAccount(account)}
-                    className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-wide ${
-                      active
-                        ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200'
-                        : 'border-slate-700 text-slate-300 hover:text-white'
-                    }`}
-                  >
-                    @{account}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                className="px-3"
-                onClick={() => void handleAiSummarizeTweets()}
-                disabled={isAiSummarizing}
-              >
-                <Wand2 className={`mr-2 h-4 w-4 ${isAiSummarizing ? 'animate-pulse' : ''}`} />
-                {isAiSummarizing ? 'Summarizing...' : 'Summarize'}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="px-3"
-                onClick={() => void handleAiGenerateFarmingTasks()}
-                disabled={isAiGeneratingTasks}
-              >
-                <ListTodo className={`mr-2 h-4 w-4 ${isAiGeneratingTasks ? 'animate-pulse' : ''}`} />
-                {isAiGeneratingTasks ? 'Generating...' : 'Generate Tasks'}
-              </Button>
-              <Button type="button" variant="ghost" className="px-3" onClick={() => void handleSync()} disabled={isSyncing}>
-                <RefreshCw className={`mr-2 h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
-                {isSyncing ? 'Syncing...' : 'Sync now'}
-              </Button>
-            </div>
-          </div>
-
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <span className="text-xs uppercase tracking-[0.12em] text-slate-400">Keywords</span>
-            {configuredKeywords.map((keyword) => {
-              const active = selectedKeywords.some((item) => item.toLowerCase() === keyword.toLowerCase());
-              return (
-                <button
-                  key={keyword}
-                  type="button"
-                  onClick={() => toggleKeyword(keyword)}
-                  className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-wide ${
-                    active
-                      ? 'border-emerald-300/40 bg-emerald-300/10 text-emerald-200'
-                      : 'border-slate-700 text-slate-300 hover:text-white'
-                  }`}
-                >
-                  {keyword}
-                </button>
-              );
-            })}
-          </div>
-
-          {aiSummary ? (
-            <div className="mb-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-              <p className="mb-1 text-xs uppercase tracking-[0.12em] text-slate-400">AI Tweet Summary</p>
-              <p className="text-sm text-slate-200">{aiSummary.summary}</p>
-              {aiSummary.highlights.length > 0 ? (
-                <ul className="mt-2 space-y-1">
-                  {aiSummary.highlights.map((highlight, index) => (
-                    <li key={`highlight-${index}`} className="text-xs text-slate-300">
-                      - {highlight}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          ) : null}
-
-          {aiTasks && aiTasks.tasks.length > 0 ? (
-            <div className="mb-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-              <p className="mb-2 text-xs uppercase tracking-[0.12em] text-slate-400">AI Farming Tasks</p>
-              <ul className="space-y-1.5">
-                {aiTasks.tasks.map((task, index) => (
-                  <li key={`ai-task-${index}`} className="rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-2">
-                    <div className="mb-1 flex flex-wrap items-center gap-2">
-                      <span className="text-sm text-white">{task.title}</span>
-                      <span className="rounded-full border border-cyan-300/35 bg-cyan-300/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-cyan-200">
-                        {task.priority}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-400">{task.reason}</p>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          <p className="mb-2 text-xs text-slate-400">Auto-sync runs every 45s for backend tracked accounts.</p>
-          {syncMessage ? <p className="mb-2 text-xs text-cyan-200">{syncMessage}</p> : null}
-          {alphaMeta?.lastFetchedAt ? (
-            <p className="mb-2 text-xs text-slate-400">
-              Last fetched: {new Date(alphaMeta.lastFetchedAt).toLocaleString()} | Stored tweets: {alphaMeta.totalCount}
-            </p>
-          ) : null}
-
-          {feedError ? (
-            <div className="mb-2 flex items-center gap-2 rounded-xl border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm text-rose-200">
-              <AlertTriangle className="h-4 w-4" />
-              {feedError}
-            </div>
-          ) : null}
-
-          {isFeedLoading ? (
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-5 text-sm text-slate-300">Loading alpha feed...</div>
-          ) : alphaTweets.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-700/80 bg-panel/60 px-3 py-5 text-sm text-slate-300">
-              No matching tweets found for current filters.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {alphaTweets.map((tweet, index) => (
-                <motion.article
-                  key={tweet.tweetId}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.18, delay: index * 0.02 }}
-                  className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"
-                >
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm text-white">@{tweet.authorUsername}</p>
-                    <p className="text-xs text-slate-400">{new Date(tweet.tweetedAt).toLocaleString()}</p>
-                  </div>
-                  <p className="mb-2 whitespace-pre-wrap break-words text-sm text-slate-200">{tweet.text}</p>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {tweet.matchedKeywords.map((keyword) => (
-                      <span
-                        key={`${tweet.tweetId}-${keyword}`}
-                        className="rounded-full border border-cyan-300/40 bg-cyan-300/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-cyan-200"
-                      >
-                        {keyword}
-                      </span>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => void handleAiExtractMint(tweet)}
-                      className="inline-flex items-center rounded-lg border border-emerald-300/35 bg-emerald-300/10 px-2.5 py-1 text-xs text-emerald-200 transition hover:border-emerald-300/55"
-                      disabled={extractingTweetId === tweet.tweetId}
-                    >
-                      {extractingTweetId === tweet.tweetId ? 'Extracting...' : 'Extract Mint'}
-                    </button>
-                    <a
-                      href={tweet.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="ml-auto inline-flex items-center rounded-lg border border-slate-600 bg-panelAlt px-2.5 py-1 text-xs text-slate-100 transition hover:border-slate-500"
-                    >
-                      Open
-                      <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                    </a>
-                  </div>
-                  {aiMintByTweetId[tweet.tweetId] ? (
-                    <div className="mt-2 rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-2 text-xs text-slate-300">
-                      <p>
-                        Project: <span className="text-white">{aiMintByTweetId[tweet.tweetId].projectName ?? 'Unknown'}</span>
-                      </p>
-                      <p>
-                        Chain: <span className="text-white">{aiMintByTweetId[tweet.tweetId].chain}</span>
-                      </p>
-                      <p>
-                        Mint Type: <span className="text-white">{aiMintByTweetId[tweet.tweetId].mintType}</span>
-                      </p>
-                      <p>
-                        Mint Date:{' '}
-                        <span className="text-white">{aiMintByTweetId[tweet.tweetId].mintDate ?? 'Not detected'}</span>
-                      </p>
-                      <p>
-                        Confidence:{' '}
-                        <span className="text-white">{Math.round(aiMintByTweetId[tweet.tweetId].confidence * 100)}%</span>
-                      </p>
-                    </div>
-                  ) : null}
-                </motion.article>
-              ))}
-            </div>
-          )}
-        </GlassCard>
       </motion.div>
     </section>
   );
@@ -1043,6 +929,163 @@ function formatIstTime(timestamp: number) {
   });
 }
 
+function readPersistedFlag(key: string, fallback: boolean) {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) return fallback;
+    return raw === '1';
+  } catch {
+    return fallback;
+  }
+}
+
+function persistFlag(key: string, value: boolean) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, value ? '1' : '0');
+  } catch {
+    // Ignore storage failures; automation still works for current session.
+  }
+}
+
+function getBrowserNotificationPermission(): NotificationPermission {
+  if (typeof Notification === 'undefined') return 'denied';
+  return Notification.permission;
+}
+
+function minutesUntilAction(item: CompanionAgendaItem, nowMs: number) {
+  if (item.at === null) return Number.POSITIVE_INFINITY;
+  return Math.floor((item.at - nowMs) / 60_000);
+}
+
+function summarizeJarvisPriorities(agendaItems: CompanionAgendaItem[], nowMs: number) {
+  const overdueCount = agendaItems.filter((item) => item.status === 'overdue').length;
+  const underHourCount = agendaItems.filter((item) => {
+    if (item.at === null) return false;
+    const minutes = minutesUntilAction(item, nowMs);
+    return minutes >= 0 && minutes <= 60;
+  }).length;
+  const highPriorityCount = agendaItems.filter((item) => {
+    const minutes = minutesUntilAction(item, nowMs);
+    if (item.status === 'overdue') return true;
+    if (minutes <= 120) return true;
+    if (item.kind === 'reminder' && minutes <= 180) return true;
+    return item.detail.toLowerCase().includes('high priority');
+  }).length;
+
+  return { overdueCount, underHourCount, highPriorityCount };
+}
+
+function buildJarvisRiskAlerts(
+  agendaItems: CompanionAgendaItem[],
+  nowMs: number,
+  dailySummary: DailyProductivitySummaryResult | null
+): JarvisRiskAlert[] {
+  const alerts: JarvisRiskAlert[] = [];
+  const overdueCount = agendaItems.filter((item) => item.status === 'overdue').length;
+  if (overdueCount > 0) {
+    alerts.push({
+      id: 'overdue-actions',
+      level: 'critical',
+      message: `${overdueCount} action${overdueCount === 1 ? '' : 's'} are overdue. Clear these first.`
+    });
+  }
+
+  const startingSoon = agendaItems.filter((item) => {
+    if (item.at === null) return false;
+    const minutes = minutesUntilAction(item, nowMs);
+    return minutes >= 0 && minutes <= 15;
+  }).length;
+  if (startingSoon > 0) {
+    alerts.push({
+      id: 'starting-soon',
+      level: 'critical',
+      message: `${startingSoon} timed action${startingSoon === 1 ? '' : 's'} start within 15 minutes.`
+    });
+  }
+
+  const underHour = agendaItems.filter((item) => {
+    if (item.at === null) return false;
+    const minutes = minutesUntilAction(item, nowMs);
+    return minutes > 15 && minutes <= 60;
+  }).length;
+  if (underHour > 0) {
+    alerts.push({
+      id: 'under-hour',
+      level: 'watch',
+      message: `${underHour} action${underHour === 1 ? '' : 's'} are due within the next hour.`
+    });
+  }
+
+  if (dailySummary && dailySummary.riskItems.length > 0) {
+    alerts.push({
+      id: 'ai-risk',
+      level: 'watch',
+      message: `AI watchlist: ${dailySummary.riskItems.slice(0, 2).join(' | ')}`
+    });
+  }
+
+  if (alerts.length === 0 && agendaItems.length > 0) {
+    alerts.push({
+      id: 'stable',
+      level: 'info',
+      message: 'No hard blockers detected. Continue execution sequence.'
+    });
+  }
+
+  return alerts.slice(0, 5);
+}
+
+function buildJarvisRunbook(agendaItems: CompanionAgendaItem[], nowMs: number): JarvisRunbookItem[] {
+  const sixHoursFromNow = nowMs + 6 * 60 * 60 * 1000;
+
+  return agendaItems
+    .filter((item) => item.status === 'overdue' || item.at === null || item.at <= sixHoursFromNow)
+    .map((item) => {
+      const minutes = minutesUntilAction(item, nowMs);
+      let priorityScore = 0;
+      if (item.status === 'overdue') priorityScore += 1000;
+      if (item.at !== null) {
+        if (minutes <= 0) priorityScore += 900;
+        else if (minutes <= 15) priorityScore += 700;
+        else if (minutes <= 60) priorityScore += 520;
+        else if (minutes <= 180) priorityScore += 320;
+        else if (minutes <= 360) priorityScore += 180;
+      } else {
+        priorityScore += 120;
+      }
+
+      if (item.kind === 'reminder') priorityScore += 260;
+      if (item.kind === 'mint') priorityScore += 190;
+      if (item.kind === 'task') priorityScore += 140;
+      if (item.detail.toLowerCase().includes('high priority')) priorityScore += 120;
+
+      let etaLabel = 'Anytime';
+      if (item.status === 'overdue') {
+        etaLabel = 'Overdue';
+      } else if (item.at !== null) {
+        if (minutes <= 0) etaLabel = 'Now';
+        else if (minutes < 60) etaLabel = `In ${minutes}m`;
+        else etaLabel = `In ${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+      }
+
+      return {
+        ...item,
+        priorityScore,
+        etaLabel
+      };
+    })
+    .sort((a, b) => b.priorityScore - a.priorityScore)
+    .slice(0, 8);
+}
+
+function jarvisRiskBadgeClass(level: JarvisRiskLevel) {
+  if (level === 'critical') return 'border-rose-300/40 bg-rose-300/10 text-rose-200';
+  if (level === 'watch') return 'border-amber-300/40 bg-amber-300/10 text-amber-200';
+  return 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200';
+}
+
 function buildJarvisBriefing(operatorName: string, nowMs: number, agendaItems: CompanionAgendaItem[]): JarvisBriefing {
   const greeting = `${buildCompanionGreeting(operatorName, nowMs)} JARVIS online.`;
   if (agendaItems.length === 0) {
@@ -1098,6 +1141,25 @@ function resolveJarvisWindowKey(timestamp: number | null): JarvisTimeWindowKey {
 function getIstHour(timestamp: number) {
   const shifted = new Date(timestamp + 330 * 60 * 1000);
   return shifted.getUTCHours();
+}
+
+function matchesJarvisCommand(normalizedInput: string, variants: string[]) {
+  return variants.some((variant) => normalizedInput === variant || normalizedInput.includes(variant));
+}
+
+function resolveJarvisRoute(normalizedInput: string): string | null {
+  if (normalizedInput.includes('dashboard') || normalizedInput.includes('overview')) return '/dashboard';
+  if (normalizedInput.includes('analytics')) return '/analytics';
+  if (normalizedInput.includes('nft') || normalizedInput.includes('mint')) return '/nft-mints';
+  if (normalizedInput.includes('project') || normalizedInput.includes('testnet')) return '/farming';
+  if (normalizedInput.includes('todo') || normalizedInput.includes('task')) return '/todo';
+  if (normalizedInput.includes('wallet')) return '/wallet-tracker';
+  if (normalizedInput.includes('bug')) return '/bugs';
+  if (normalizedInput.includes('api cost') || normalizedInput.includes('api-cost') || normalizedInput.includes('cost')) {
+    return '/api-costs';
+  }
+  if (normalizedInput.includes('setting')) return '/settings';
+  return null;
 }
 
 function priorityLabel(priority: TodoTaskRecord['priority']) {

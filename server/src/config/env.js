@@ -158,7 +158,6 @@ export const env = {
     defaultCurrency: getOptionalEnv('API_COST_DEFAULT_CURRENCY', 'USD'),
     openAiInputPer1kUsd: parseOptionalNumber('API_COST_OPENAI_INPUT_PER_1K_USD', 0),
     openAiOutputPer1kUsd: parseOptionalNumber('API_COST_OPENAI_OUTPUT_PER_1K_USD', 0),
-    twitterRequestUsd: parseOptionalNumber('API_COST_TWITTER_REQUEST_USD', 0),
     brevoEmailUsd: parseOptionalNumber('API_COST_BREVO_EMAIL_USD', 0),
     openseaRequestUsd: parseOptionalNumber('API_COST_OPENSEA_REQUEST_USD', 0),
     magicedenRequestUsd: parseOptionalNumber('API_COST_MAGICEDEN_REQUEST_USD', 0),

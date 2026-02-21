@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Bug, Camera, ImagePlus, MessageSquareText, Pencil, Plus, ShieldAlert, Trash2 } from 'lucide-react';
-import { type ChangeEvent, type DragEvent, type FormEvent, useMemo, useState } from 'react';
+import { Bug, MessageSquareText, Pencil, Plus, ShieldAlert, Trash2 } from 'lucide-react';
+import { type DragEvent, type FormEvent, useMemo, useState } from 'react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import {
@@ -165,28 +165,6 @@ export function BugTrackerPage() {
     }
   }
 
-  async function handleScreenshotUpload(event: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files ?? []);
-    if (files.length === 0) return;
-
-    try {
-      const encoded = await Promise.all(files.map(fileToDataUrl));
-      setForm((prev) => ({
-        ...prev,
-        screenshots: [...prev.screenshots, ...encoded].slice(0, 10)
-      }));
-    } finally {
-      event.target.value = '';
-    }
-  }
-
-  function removeScreenshot(index: number) {
-    setForm((prev) => ({
-      ...prev,
-      screenshots: prev.screenshots.filter((_, currentIndex) => currentIndex !== index)
-    }));
-  }
-
   return (
     <section className="mx-auto max-w-7xl">
       <header className="mb-6">
@@ -252,42 +230,6 @@ export function BugTrackerPage() {
               rows={4}
               className="w-full resize-none rounded-xl border border-slate-700 bg-panelAlt px-3 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-glow/70 focus:outline-none focus:ring-2 focus:ring-glow/25"
             />
-
-            <div className="rounded-xl border border-slate-700 bg-panelAlt p-3">
-              <div className="mb-2 flex items-center gap-2">
-                <Camera className="h-4 w-4 text-glow" />
-                <p className="text-xs uppercase tracking-[0.12em] text-slate-400">Screenshot Attachments</p>
-              </div>
-              <label className="inline-flex cursor-pointer items-center rounded-xl border border-slate-600 bg-panel px-3 py-2 text-sm text-slate-100 hover:border-slate-500">
-                <ImagePlus className="mr-2 h-4 w-4" />
-                Upload images
-                <input type="file" accept="image/*" multiple className="hidden" onChange={handleScreenshotUpload} />
-              </label>
-
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                <AnimatePresence>
-                  {form.screenshots.map((image, index) => (
-                    <motion.article
-                      key={`${index}-${image.slice(0, 18)}`}
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -8 }}
-                      className="relative overflow-hidden rounded-xl border border-white/10 bg-panel"
-                    >
-                      <img src={image} alt={`Attachment ${index + 1}`} className="h-24 w-full object-cover" />
-                      <button
-                        type="button"
-                        className="absolute right-1 top-1 rounded-md bg-black/70 p-1 text-white"
-                        onClick={() => removeScreenshot(index)}
-                        aria-label={`Remove attachment ${index + 1}`}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </motion.article>
-                  ))}
-                </AnimatePresence>
-              </div>
-            </div>
 
             {errorText ? <p className="text-sm text-danger">{errorText}</p> : null}
 
@@ -514,13 +456,4 @@ function priorityBadge(priority: BugPriority) {
   if (priority === 'high') return 'border border-orange-300/50 bg-orange-300/15 text-orange-200';
   if (priority === 'medium') return 'border border-amber-300/40 bg-amber-300/10 text-amber-200';
   return 'border border-emerald-300/40 bg-emerald-300/10 text-emerald-200';
-}
-
-function fileToDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
 }

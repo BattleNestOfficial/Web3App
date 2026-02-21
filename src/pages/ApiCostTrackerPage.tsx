@@ -157,7 +157,7 @@ export function ApiCostTrackerPage() {
         </div>
 
         <p className="mb-3 text-xs uppercase tracking-[0.12em] text-slate-400">
-          Auto-tracked: OpenAI, Twitter, Brevo, OpenSea, Magic Eden | Window: Last {apiCosts?.windowDays ?? 30} days
+          Auto-tracked: OpenAI, Brevo, OpenSea, Magic Eden | Window: Last {apiCosts?.windowDays ?? 30} days
         </p>
 
         {isApiCostsLoading ? (

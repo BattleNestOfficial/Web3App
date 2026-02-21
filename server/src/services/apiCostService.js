@@ -1,7 +1,7 @@
 import { pool } from '../config/db.js';
 import { env } from '../config/env.js';
 
-const KNOWN_PROVIDERS = ['openai', 'twitter', 'brevo', 'opensea', 'magiceden', 'rest'];
+const KNOWN_PROVIDERS = ['openai', 'brevo', 'opensea', 'magiceden', 'rest'];
 
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
@@ -51,7 +51,6 @@ function normalizeStatusCode(value) {
 }
 
 function defaultUnitCostUsd(provider) {
-  if (provider === 'twitter') return toNumber(env.apiCosts.twitterRequestUsd, 0);
   if (provider === 'brevo') return toNumber(env.apiCosts.brevoEmailUsd, 0);
   if (provider === 'opensea') return toNumber(env.apiCosts.openseaRequestUsd, 0);
   if (provider === 'magiceden') return toNumber(env.apiCosts.magicedenRequestUsd, 0);
@@ -114,7 +113,6 @@ export function getApiCostConfig() {
     defaultCurrency: normalizeCurrency(env.apiCosts.defaultCurrency),
     openAiInputPer1kUsd: toNumber(env.apiCosts.openAiInputPer1kUsd, 0),
     openAiOutputPer1kUsd: toNumber(env.apiCosts.openAiOutputPer1kUsd, 0),
-    twitterRequestUsd: toNumber(env.apiCosts.twitterRequestUsd, 0),
     brevoEmailUsd: toNumber(env.apiCosts.brevoEmailUsd, 0),
     openseaRequestUsd: toNumber(env.apiCosts.openseaRequestUsd, 0),
     magicedenRequestUsd: toNumber(env.apiCosts.magicedenRequestUsd, 0),
@@ -216,7 +214,8 @@ export async function getApiCostSummary(options = {}) {
          COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
          COUNT(*)::int AS events_count
        FROM api_usage_events
-       WHERE created_at >= $1`,
+       WHERE created_at >= $1
+         AND provider_key <> 'twitter'`,
       [sinceIso]
     ),
     pool.query(
@@ -226,7 +225,8 @@ export async function getApiCostSummary(options = {}) {
          COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
          COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
          COUNT(*)::int AS events_count
-       FROM api_usage_events`
+       FROM api_usage_events
+       WHERE provider_key <> 'twitter'`
     ),
     pool.query(
       `SELECT
@@ -239,6 +239,7 @@ export async function getApiCostSummary(options = {}) {
          MAX(created_at) AS last_event_at
        FROM api_usage_events
        WHERE created_at >= $1
+         AND provider_key <> 'twitter'
        GROUP BY provider_key
        ORDER BY total_cost_usd DESC, total_requests DESC
        LIMIT $2`,
@@ -260,6 +261,7 @@ export async function getApiCostSummary(options = {}) {
          metadata,
          created_at
        FROM api_usage_events
+       WHERE provider_key <> 'twitter'
        ORDER BY created_at DESC
        LIMIT $1`,
       [recentLimit]
