@@ -1,8 +1,9 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { motion } from 'framer-motion';
 import { Brain, CalendarClock, CheckCircle2, Clock3, ExternalLink } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../app/providers/AuthProvider';
 import {
   fetchDailyProductivitySummaryWithAi,
@@ -35,6 +36,8 @@ const item = {
   }
 };
 
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, index) => index);
+
 type CompanionAgendaKind = 'task' | 'mint' | 'reminder';
 type CompanionAgendaStatus = 'pending' | 'done' | 'overdue' | 'live';
 
@@ -63,6 +66,8 @@ type JarvisBriefing = {
   nextAction: string;
 };
 
+type JarvisMode = 'balanced' | 'focus' | 'aggressive';
+
 function GlassCard({
   title,
   icon,
@@ -88,14 +93,24 @@ function GlassCard({
   );
 }
 
+function MetricPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+      <p className="text-[11px] uppercase tracking-wide text-slate-400">{label}</p>
+      <p className="mt-1 text-sm text-slate-100">{value}</p>
+    </div>
+  );
+}
+
 export function DashboardPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [dailyAiSummary, setDailyAiSummary] = useState<DailyProductivitySummaryResult | null>(null);
   const [dailySummaryError, setDailySummaryError] = useState('');
   const [isAiLoadingDailySummary, setIsAiLoadingDailySummary] = useState(false);
   const [walletTimelineEvents, setWalletTimelineEvents] = useState<WalletActivityEvent[]>([]);
-  const [isActivityLoading, setIsActivityLoading] = useState(true);
-  const [activityError, setActivityError] = useState('');
+  const [isWalletPulseLoading, setIsWalletPulseLoading] = useState(true);
+  const [walletPulseError, setWalletPulseError] = useState('');
   const [companionError, setCompanionError] = useState('');
   const [updatingTaskId, setUpdatingTaskId] = useState<number | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -107,6 +122,18 @@ export function DashboardPage() {
   );
   const [jarvisNotificationPermission, setJarvisNotificationPermission] = useState<NotificationPermission>(
     getBrowserNotificationPermission
+  );
+  const [jarvisMode, setJarvisMode] = useState<JarvisMode>(() =>
+    readPersistedEnum('jarvis_mode', 'balanced', ['balanced', 'focus', 'aggressive'])
+  );
+  const [jarvisQuietHoursEnabled, setJarvisQuietHoursEnabled] = useState(() =>
+    readPersistedFlag('jarvis_quiet_hours_enabled', false)
+  );
+  const [jarvisQuietStartHour, setJarvisQuietStartHour] = useState(() =>
+    readPersistedNumber('jarvis_quiet_start_hour', 23, 0, 23)
+  );
+  const [jarvisQuietEndHour, setJarvisQuietEndHour] = useState(() =>
+    readPersistedNumber('jarvis_quiet_end_hour', 8, 0, 23)
   );
   const [jarvisAutoLog, setJarvisAutoLog] = useState('Automation idle.');
   const jarvisNotifiedIdsRef = useRef(new Set<string>());
@@ -127,9 +154,37 @@ export function DashboardPage() {
   const localTodoTasks = useMemo(() => todoTasks ?? [], [todoTasks]);
   const appActivityEvents = useMemo(() => appActivityRows ?? [], [appActivityRows]);
   const activityTimeline = useMemo(
-    () => buildTrackedActivityEntries(walletTimelineEvents, localMints, appActivityEvents, 12),
-    [appActivityEvents, localMints, walletTimelineEvents]
+    () => buildTrackedActivityEntries([], [], appActivityEvents, 16),
+    [appActivityEvents]
   );
+  const walletPulse = useMemo(() => {
+    const since24h = nowTick - 24 * 60 * 60 * 1000;
+    let mintCount = 0;
+    let buyCount = 0;
+    let sellCount = 0;
+    let totalVolume = 0;
+
+    for (const event of walletTimelineEvents) {
+      const at = new Date(event.event_at).getTime();
+      if (!Number.isFinite(at) || at < since24h) continue;
+
+      if (event.event_type === 'mint') mintCount += 1;
+      if (event.event_type === 'buy') buyCount += 1;
+      if (event.event_type === 'sell') sellCount += 1;
+
+      const value = Number.parseFloat(String(event.price_value ?? ''));
+      if (Number.isFinite(value)) {
+        totalVolume += value;
+      }
+    }
+
+    return {
+      mintCount,
+      buyCount,
+      sellCount,
+      totalVolume: Number(totalVolume.toFixed(3))
+    };
+  }, [nowTick, walletTimelineEvents]);
   const localFallbackSummary = useMemo(
     () =>
       buildLocalDailySummary({
@@ -169,39 +224,32 @@ export function DashboardPage() {
     };
   }, []);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadActivityTimeline(showLoader: boolean) {
-      if (showLoader) {
-        setIsActivityLoading(true);
-      }
-      setActivityError('');
-      try {
-        const walletEvents = await fetchWalletActivityEvents({ limit: 160 });
-        if (!isMounted) return;
-        setWalletTimelineEvents(walletEvents);
-      } catch {
-        if (!isMounted) return;
-        setWalletTimelineEvents([]);
-        setActivityError('Live wallet sync unavailable. Showing local activity only.');
-      } finally {
-        if (isMounted) {
-          setIsActivityLoading(false);
-        }
-      }
+  const refreshWalletPulse = useCallback(async (showLoader: boolean) => {
+    if (showLoader) {
+      setIsWalletPulseLoading(true);
     }
+    setWalletPulseError('');
+    try {
+      const walletEvents = await fetchWalletActivityEvents({ limit: 160 });
+      setWalletTimelineEvents(walletEvents);
+    } catch {
+      setWalletTimelineEvents([]);
+      setWalletPulseError('Wallet pulse unavailable right now.');
+    } finally {
+      setIsWalletPulseLoading(false);
+    }
+  }, []);
 
-    void loadActivityTimeline(true);
+  useEffect(() => {
+    void refreshWalletPulse(true);
     const timer = window.setInterval(() => {
-      void loadActivityTimeline(false);
+      void refreshWalletPulse(false);
     }, 45_000);
 
     return () => {
-      isMounted = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [refreshWalletPulse]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -318,25 +366,30 @@ export function DashboardPage() {
       .slice(0, 24);
   }, [dayBounds.end, dayBounds.start, localMints, localReminders, nowTick, todoTasks]);
 
-  const pendingCompanionCount = useMemo(
-    () => companionAgenda.filter((item) => item.status !== 'done').length,
-    [companionAgenda]
-  );
   const actionableCompanionAgenda = useMemo(
     () => companionAgenda.filter((item) => item.status !== 'done'),
     [companionAgenda]
   );
+  const modeCompanionAgenda = useMemo(
+    () => applyJarvisMode(actionableCompanionAgenda, jarvisMode),
+    [actionableCompanionAgenda, jarvisMode]
+  );
+  const pendingCompanionCount = useMemo(() => modeCompanionAgenda.length, [modeCompanionAgenda]);
+  const jarvisExecutionSequence = useMemo(
+    () => buildJarvisSequence(modeCompanionAgenda, nowTick, jarvisMode).slice(0, 6),
+    [modeCompanionAgenda, nowTick, jarvisMode]
+  );
   const jarvisBriefing = useMemo(
-    () => buildJarvisBriefing(operatorName, nowTick, actionableCompanionAgenda),
-    [actionableCompanionAgenda, nowTick, operatorName]
+    () => buildJarvisBriefing(operatorName, nowTick, modeCompanionAgenda),
+    [modeCompanionAgenda, nowTick, operatorName]
   );
   const jarvisTimeBuckets = useMemo(
-    () => groupAgendaByIstWindow(actionableCompanionAgenda),
-    [actionableCompanionAgenda]
+    () => groupAgendaByIstWindow(modeCompanionAgenda),
+    [modeCompanionAgenda]
   );
   const jarvisPriorityStats = useMemo(
-    () => summarizeJarvisPriorities(actionableCompanionAgenda, nowTick),
-    [actionableCompanionAgenda, nowTick]
+    () => summarizeJarvisPriorities(modeCompanionAgenda, nowTick),
+    [modeCompanionAgenda, nowTick]
   );
 
   useEffect(() => {
@@ -348,6 +401,22 @@ export function DashboardPage() {
   }, [jarvisNotificationsEnabled]);
 
   useEffect(() => {
+    persistText('jarvis_mode', jarvisMode);
+  }, [jarvisMode]);
+
+  useEffect(() => {
+    persistFlag('jarvis_quiet_hours_enabled', jarvisQuietHoursEnabled);
+  }, [jarvisQuietHoursEnabled]);
+
+  useEffect(() => {
+    persistNumber('jarvis_quiet_start_hour', jarvisQuietStartHour);
+  }, [jarvisQuietStartHour]);
+
+  useEffect(() => {
+    persistNumber('jarvis_quiet_end_hour', jarvisQuietEndHour);
+  }, [jarvisQuietEndHour]);
+
+  useEffect(() => {
     setJarvisNotificationPermission(getBrowserNotificationPermission());
   }, []);
 
@@ -357,14 +426,21 @@ export function DashboardPage() {
       return;
     }
 
-    const readySoon = actionableCompanionAgenda.filter((item) => {
+    if (jarvisQuietHoursEnabled && isQuietHours(nowTick, jarvisQuietStartHour, jarvisQuietEndHour)) {
+      setJarvisAutoLog(
+        `Quiet hours active (${formatHourLabel(jarvisQuietStartHour)}-${formatHourLabel(jarvisQuietEndHour)} IST). Alerts suppressed.`
+      );
+      return;
+    }
+
+    const readySoon = modeCompanionAgenda.filter((item) => {
       if (item.at === null) return false;
       const minutes = Math.floor((item.at - nowTick) / 60_000);
       return minutes >= 0 && minutes <= 15;
     });
-    const overdueItems = actionableCompanionAgenda.filter((item) => item.status === 'overdue');
+    const overdueItems = modeCompanionAgenda.filter((item) => item.status === 'overdue');
     setJarvisAutoLog(
-      `Auto-watch active | Critical now: ${overdueItems.length} | Starting in 15m: ${readySoon.length}`
+      `Auto-watch active | Mode: ${jarvisMode} | Critical now: ${overdueItems.length} | Starting in 15m: ${readySoon.length}`
     );
 
     if (
@@ -393,10 +469,14 @@ export function DashboardPage() {
       }
     }
   }, [
-    actionableCompanionAgenda,
+    modeCompanionAgenda,
     jarvisAutomationEnabled,
+    jarvisMode,
     jarvisNotificationPermission,
     jarvisNotificationsEnabled,
+    jarvisQuietEndHour,
+    jarvisQuietHoursEnabled,
+    jarvisQuietStartHour,
     nowTick
   ]);
 
@@ -525,30 +605,77 @@ export function DashboardPage() {
         </GlassCard>
 
         <GlassCard title="Activity Timeline" icon={<Clock3 className="h-4 w-4" />} className="lg:col-span-4">
-          {isActivityLoading ? (
-            <p className="text-sm text-slate-300">Loading activity stream...</p>
-          ) : (
-            <div className="relative pl-5">
-              <div className="absolute left-[7px] top-1 h-[calc(100%-8px)] w-px bg-white/15" />
-              {activityTimeline.length === 0 ? (
-                <p className="text-sm text-slate-300">No activity captured yet.</p>
-              ) : (
-                <ul className="space-y-4">
-                  {activityTimeline.map((entry) => (
-                    <li key={entry.id} className="relative">
-                      <span
-                        className={`absolute -left-5 top-1.5 h-3 w-3 rounded-full border ${timelineDotClass(entry.kind)}`}
-                      />
-                      <p className="text-xs text-slate-400">{formatTimelineTime(entry.happenedAt)}</p>
-                      <p className="text-sm text-white">{entry.title}</p>
-                      <p className="text-xs text-slate-400">{entry.detail}</p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {activityError ? <p className="mt-3 text-xs text-amber-200">{activityError}</p> : null}
-            </div>
-          )}
+          <div className="relative pl-5">
+            <div className="absolute left-[7px] top-1 h-[calc(100%-8px)] w-px bg-white/15" />
+            {activityTimeline.length === 0 ? (
+              <p className="text-sm text-slate-300">No create/update/delete actions captured yet.</p>
+            ) : (
+              <ul className="space-y-4">
+                {activityTimeline.map((entry) => (
+                  <li key={entry.id} className="relative">
+                    <span
+                      className={`absolute -left-5 top-1.5 h-3 w-3 rounded-full border ${timelineDotClass(entry.kind)}`}
+                    />
+                    <p className="text-xs text-slate-400">{formatTimelineTime(entry.happenedAt)}</p>
+                    <p className="text-sm text-white">{entry.title}</p>
+                    <p className="text-xs text-slate-400">{entry.detail}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </GlassCard>
+
+        <GlassCard title="Web3OS Pulse" className="lg:col-span-6">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <MetricPill label="Mints (24h)" value={String(resolvedDailySummary.metrics.mintsUpcoming24h)} />
+            <MetricPill label="Claims (24h)" value={String(resolvedDailySummary.metrics.farmingClaimsDue24h)} />
+            <MetricPill label="Reminders (24h)" value={String(resolvedDailySummary.metrics.remindersDue24h)} />
+            <MetricPill label="Overdue Tasks" value={String(jarvisPriorityStats.overdueCount)} />
+            <MetricPill label="Wallet Mints (24h)" value={String(walletPulse.mintCount)} />
+            <MetricPill label="Wallet Buys (24h)" value={String(walletPulse.buyCount)} />
+            <MetricPill label="Wallet Sells (24h)" value={String(walletPulse.sellCount)} />
+          </div>
+          <p className="mt-2 text-xs text-slate-400">
+            Wallet volume (24h): {walletPulse.totalVolume} native units
+          </p>
+          {isWalletPulseLoading ? <p className="mt-1 text-xs text-slate-400">Refreshing wallet pulse...</p> : null}
+          {walletPulseError ? <p className="mt-1 text-xs text-amber-200">{walletPulseError}</p> : null}
+        </GlassCard>
+
+        <GlassCard title="Quick Launchpad" className="lg:col-span-6">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Button type="button" variant="secondary" className="h-9 justify-start px-3 text-xs" onClick={() => navigate('/nft-mints')}>
+              Add Mint Schedule
+            </Button>
+            <Button type="button" variant="secondary" className="h-9 justify-start px-3 text-xs" onClick={() => navigate('/todo')}>
+              Add To-Do Task
+            </Button>
+            <Button type="button" variant="secondary" className="h-9 justify-start px-3 text-xs" onClick={() => navigate('/farming')}>
+              Update Project Progress
+            </Button>
+            <Button type="button" variant="secondary" className="h-9 justify-start px-3 text-xs" onClick={() => navigate('/wallet-tracker')}>
+              Manage Wallet Trackers
+            </Button>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-8 px-2.5 text-xs"
+              onClick={() => void refreshWalletPulse(true)}
+            >
+              Refresh Wallet Pulse
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-8 px-2.5 text-xs"
+              onClick={() => navigate('/api-costs')}
+            >
+              Open API Cost Tracker
+            </Button>
+          </div>
         </GlassCard>
 
         <GlassCard title="JARVIS AI Assistant" icon={<Brain className="h-4 w-4" />} className="lg:col-span-8">
@@ -608,6 +735,62 @@ export function DashboardPage() {
           </div>
 
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <label className="space-y-1">
+              <span className="text-[11px] uppercase tracking-wide text-slate-400">Mission Mode</span>
+              <select
+                value={jarvisMode}
+                onChange={(event) => setJarvisMode(event.target.value as JarvisMode)}
+                className="h-9 w-full rounded-lg border border-slate-700 bg-panelAlt px-2.5 text-xs text-white focus:border-cyan-300/45 focus:outline-none"
+              >
+                <option value="balanced">Balanced</option>
+                <option value="focus">Focus</option>
+                <option value="aggressive">Aggressive</option>
+              </select>
+            </label>
+            <label className="space-y-1">
+              <span className="text-[11px] uppercase tracking-wide text-slate-400">Quiet Hours</span>
+              <button
+                type="button"
+                className={`h-9 w-full rounded-lg border px-2.5 text-xs ${
+                  jarvisQuietHoursEnabled
+                    ? 'border-cyan-300/45 bg-cyan-300/10 text-cyan-200'
+                    : 'border-slate-700 bg-panelAlt text-slate-300'
+                }`}
+                onClick={() => setJarvisQuietHoursEnabled((prev) => !prev)}
+              >
+                {jarvisQuietHoursEnabled ? 'Enabled' : 'Disabled'}
+              </button>
+            </label>
+            <div className="space-y-1">
+              <span className="text-[11px] uppercase tracking-wide text-slate-400">Quiet Window (IST)</span>
+              <div className="grid grid-cols-2 gap-2">
+                <select
+                  value={jarvisQuietStartHour}
+                  onChange={(event) => setJarvisQuietStartHour(Number.parseInt(event.target.value, 10))}
+                  className="h-9 rounded-lg border border-slate-700 bg-panelAlt px-2 text-xs text-white focus:border-cyan-300/45 focus:outline-none"
+                >
+                  {HOUR_OPTIONS.map((hour) => (
+                    <option key={`quiet-start-${hour}`} value={hour}>
+                      {formatHourLabel(hour)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={jarvisQuietEndHour}
+                  onChange={(event) => setJarvisQuietEndHour(Number.parseInt(event.target.value, 10))}
+                  className="h-9 rounded-lg border border-slate-700 bg-panelAlt px-2 text-xs text-white focus:border-cyan-300/45 focus:outline-none"
+                >
+                  {HOUR_OPTIONS.map((hour) => (
+                    <option key={`quiet-end-${hour}`} value={hour}>
+                      {formatHourLabel(hour)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
             <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
               <p className="text-[11px] uppercase tracking-wide text-slate-400">Overdue</p>
               <p className="mt-1 text-sm text-rose-200">{jarvisPriorityStats.overdueCount}</p>
@@ -628,6 +811,29 @@ export function DashboardPage() {
             </div>
           ) : null}
 
+          <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+            <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Execution Sequence</p>
+            {jarvisExecutionSequence.length === 0 ? (
+              <p className="mt-1 text-xs text-slate-300">No mission sequence generated for this mode.</p>
+            ) : (
+              <ol className="mt-2 space-y-1.5">
+                {jarvisExecutionSequence.map((item, index) => (
+                  <li key={`sequence-${item.id}`} className="rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-xs text-slate-100">
+                        {index + 1}. {item.title}
+                      </p>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${companionStatusBadgeClass(item.status)}`}>
+                        {item.at !== null ? formatIstTime(item.at) : 'Anytime'}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-slate-400">{item.detail}</p>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+
           {jarvisTimeBuckets.some((bucket) => bucket.items.length > 0) ? (
             <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
               {jarvisTimeBuckets
@@ -643,11 +849,11 @@ export function DashboardPage() {
             </div>
           ) : null}
 
-          {actionableCompanionAgenda.length === 0 ? (
+          {modeCompanionAgenda.length === 0 ? (
             <p className="mt-3 text-sm text-slate-300">No checklist for today yet.</p>
           ) : (
             <ol className="mt-3 space-y-2">
-              {actionableCompanionAgenda.map((item) => (
+              {modeCompanionAgenda.map((item) => (
                 <li
                   key={item.id}
                   className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2"
@@ -821,6 +1027,30 @@ function readPersistedFlag(key: string, fallback: boolean) {
   }
 }
 
+function readPersistedNumber(key: string, fallback: number, min: number, max: number) {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, parsed));
+  } catch {
+    return fallback;
+  }
+}
+
+function readPersistedEnum<T extends string>(key: string, fallback: T, allowed: T[]) {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return fallback;
+    return allowed.includes(raw as T) ? (raw as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function persistFlag(key: string, value: boolean) {
   if (typeof window === 'undefined') return;
   try {
@@ -830,9 +1060,43 @@ function persistFlag(key: string, value: boolean) {
   }
 }
 
+function persistNumber(key: string, value: number) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch {
+    // Ignore storage failures; automation still works for current session.
+  }
+}
+
+function persistText(key: string, value: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage failures; automation still works for current session.
+  }
+}
+
 function getBrowserNotificationPermission(): NotificationPermission {
   if (typeof Notification === 'undefined') return 'denied';
   return Notification.permission;
+}
+
+function formatHourLabel(hour: number) {
+  const normalized = ((hour % 24) + 24) % 24;
+  const period = normalized >= 12 ? 'PM' : 'AM';
+  const h = normalized % 12 === 0 ? 12 : normalized % 12;
+  return `${String(h).padStart(2, '0')}:00 ${period}`;
+}
+
+function isQuietHours(nowMs: number, startHour: number, endHour: number) {
+  if (startHour === endHour) return false;
+  const currentHour = getIstHour(nowMs);
+  if (startHour < endHour) {
+    return currentHour >= startHour && currentHour < endHour;
+  }
+  return currentHour >= startHour || currentHour < endHour;
 }
 
 function minutesUntilAction(item: CompanionAgendaItem, nowMs: number) {
@@ -856,6 +1120,70 @@ function summarizeJarvisPriorities(agendaItems: CompanionAgendaItem[], nowMs: nu
   }).length;
 
   return { overdueCount, underHourCount, highPriorityCount };
+}
+
+function applyJarvisMode(items: CompanionAgendaItem[], mode: JarvisMode) {
+  if (mode === 'balanced') return items;
+
+  if (mode === 'focus') {
+    return items.filter((item) => {
+      if (item.status === 'overdue') return true;
+      if (item.kind !== 'task') return true;
+      const detail = item.detail.toLowerCase();
+      return detail.includes('high') || detail.includes('medium');
+    });
+  }
+
+  return [...items].sort((a, b) => {
+    const rank = (item: CompanionAgendaItem) => {
+      if (item.status === 'overdue') return 0;
+      if (item.kind === 'reminder') return 1;
+      if (item.kind === 'mint') return 2;
+      return 3;
+    };
+    const delta = rank(a) - rank(b);
+    if (delta !== 0) return delta;
+    if (a.at !== null && b.at !== null && a.at !== b.at) return a.at - b.at;
+    if (a.at !== null && b.at === null) return -1;
+    if (a.at === null && b.at !== null) return 1;
+    return a.title.localeCompare(b.title);
+  });
+}
+
+function buildJarvisSequence(items: CompanionAgendaItem[], nowMs: number, mode: JarvisMode) {
+  const weighted = items.map((item) => {
+    const minutes = minutesUntilAction(item, nowMs);
+    let score = 0;
+
+    if (item.status === 'overdue') score += 1000;
+    if (item.at !== null) {
+      if (minutes <= 0) score += 900;
+      else if (minutes <= 15) score += 700;
+      else if (minutes <= 60) score += 520;
+      else if (minutes <= 180) score += 340;
+      else score += 120;
+    } else {
+      score += 80;
+    }
+
+    if (item.kind === 'reminder') score += 220;
+    if (item.kind === 'mint') score += 160;
+    if (item.kind === 'task') score += 120;
+
+    const detail = item.detail.toLowerCase();
+    if (detail.includes('high')) score += 120;
+    if (detail.includes('medium')) score += 60;
+
+    if (mode === 'aggressive' && item.kind === 'mint') score += 80;
+    if (mode === 'aggressive' && item.kind === 'reminder') score += 60;
+    if (mode === 'focus' && item.kind === 'task') score += 40;
+
+    return { item, score };
+  });
+
+  return weighted
+    .sort((a, b) => b.score - a.score)
+    .map((entry) => entry.item);
 }
 
 function buildJarvisBriefing(operatorName: string, nowMs: number, agendaItems: CompanionAgendaItem[]): JarvisBriefing {
