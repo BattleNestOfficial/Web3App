@@ -98,6 +98,12 @@ function fromAppEvent(event: AppActivityEvent): TrackedActivityEntry | null {
   const happenedAt = Number(event.happenedAt);
   if (!Number.isFinite(happenedAt)) return null;
 
+  const action = normalizeText(event.action).toLowerCase();
+  const titleText = normalizeText(event.title).toLowerCase();
+  if (action === 'view_page' || action === 'page_view' || titleText === 'page viewed') {
+    return null;
+  }
+
   const title = normalizeText(event.title) || 'Activity';
   const detail = normalizeText(event.detail);
   const source = sourceLabel(event.source);

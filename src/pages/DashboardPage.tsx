@@ -3,7 +3,6 @@ import { motion } from 'framer-motion';
 import { Brain, CalendarClock, CheckCircle2, Clock3, ExternalLink } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../app/providers/AuthProvider';
 import {
   fetchDailyProductivitySummaryWithAi,
@@ -64,19 +63,6 @@ type JarvisBriefing = {
   nextAction: string;
 };
 
-type JarvisRiskLevel = 'critical' | 'watch' | 'info';
-
-type JarvisRiskAlert = {
-  id: string;
-  level: JarvisRiskLevel;
-  message: string;
-};
-
-type JarvisRunbookItem = CompanionAgendaItem & {
-  priorityScore: number;
-  etaLabel: string;
-};
-
 function GlassCard({
   title,
   icon,
@@ -104,7 +90,6 @@ function GlassCard({
 
 export function DashboardPage() {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const [dailyAiSummary, setDailyAiSummary] = useState<DailyProductivitySummaryResult | null>(null);
   const [dailySummaryError, setDailySummaryError] = useState('');
   const [isAiLoadingDailySummary, setIsAiLoadingDailySummary] = useState(false);
@@ -124,10 +109,6 @@ export function DashboardPage() {
     getBrowserNotificationPermission
   );
   const [jarvisAutoLog, setJarvisAutoLog] = useState('Automation idle.');
-  const [jarvisCommandInput, setJarvisCommandInput] = useState('');
-  const [jarvisCommandOutput, setJarvisCommandOutput] = useState('Command channel idle. Awaiting instruction.');
-  const [jarvisCommandHistory, setJarvisCommandHistory] = useState<string[]>([]);
-  const [isJarvisExecutingCommand, setIsJarvisExecutingCommand] = useState(false);
   const jarvisNotifiedIdsRef = useRef(new Set<string>());
   const todoTasks = useLiveQuery(async () => todoDB.tasks.toArray(), []);
   const farmingRows = useLiveQuery(
@@ -353,14 +334,6 @@ export function DashboardPage() {
     () => groupAgendaByIstWindow(actionableCompanionAgenda),
     [actionableCompanionAgenda]
   );
-  const jarvisRiskAlerts = useMemo(
-    () => buildJarvisRiskAlerts(actionableCompanionAgenda, nowTick, resolvedDailySummary),
-    [actionableCompanionAgenda, nowTick, resolvedDailySummary]
-  );
-  const jarvisRunbook = useMemo(
-    () => buildJarvisRunbook(actionableCompanionAgenda, nowTick),
-    [actionableCompanionAgenda, nowTick]
-  );
   const jarvisPriorityStats = useMemo(
     () => summarizeJarvisPriorities(actionableCompanionAgenda, nowTick),
     [actionableCompanionAgenda, nowTick]
@@ -391,7 +364,7 @@ export function DashboardPage() {
     });
     const overdueItems = actionableCompanionAgenda.filter((item) => item.status === 'overdue');
     setJarvisAutoLog(
-      `Auto-watch active | Critical now: ${overdueItems.length} | Starting in 15m: ${readySoon.length} | Runbook: ${jarvisRunbook.length} actions`
+      `Auto-watch active | Critical now: ${overdueItems.length} | Starting in 15m: ${readySoon.length}`
     );
 
     if (
@@ -424,8 +397,7 @@ export function DashboardPage() {
     jarvisAutomationEnabled,
     jarvisNotificationPermission,
     jarvisNotificationsEnabled,
-    nowTick,
-    jarvisRunbook.length
+    nowTick
   ]);
 
   async function handleToggleTaskFromCompanion(taskId: number, done: boolean) {
@@ -458,47 +430,6 @@ export function DashboardPage() {
       }
     } catch {
       setJarvisAutoLog('Notification permission request failed.');
-    }
-  }
-
-  async function handleRunJarvisCommand(rawCommand: string) {
-    const command = rawCommand.trim();
-    if (!command) {
-      setJarvisCommandOutput('Command empty. Try: "automation on", "alerts on", or "open todo".');
-      return;
-    }
-
-    const normalized = command.toLowerCase();
-    setIsJarvisExecutingCommand(true);
-    setJarvisCommandHistory((prev) => [command, ...prev].slice(0, 5));
-
-    try {
-      if (matchesJarvisCommand(normalized, ['automation on', 'enable automation', 'autopilot on'])) {
-        setJarvisAutomationEnabled(true);
-        setJarvisCommandOutput('Autopilot enabled.');
-      } else if (matchesJarvisCommand(normalized, ['automation off', 'pause automation', 'autopilot off'])) {
-        setJarvisAutomationEnabled(false);
-        setJarvisCommandOutput('Autopilot paused.');
-      } else if (matchesJarvisCommand(normalized, ['alerts on', 'enable alerts', 'notification on'])) {
-        await handleEnableJarvisNotifications();
-        setJarvisCommandOutput('Alerts command executed. Check permission status above.');
-      } else if (normalized.includes('open') || normalized.includes('go to') || normalized.includes('goto')) {
-        const route = resolveJarvisRoute(normalized);
-        if (route) {
-          navigate(route);
-          setJarvisCommandOutput(`Navigating to ${route}.`);
-        } else {
-          setJarvisCommandOutput('Module not recognized. Try: open nft, open todo, open bugs, open api costs, open settings.');
-        }
-      } else {
-        setJarvisCommandOutput(
-          'Command not recognized. Try: "automation on/off", "alerts on", "open todo", "open nft", or "open settings".'
-        );
-      }
-    } catch (error) {
-      setJarvisCommandOutput(error instanceof Error ? error.message : 'Command execution failed.');
-    } finally {
-      setIsJarvisExecutingCommand(false);
     }
   }
 
@@ -676,33 +607,6 @@ export function DashboardPage() {
             </Button>
           </div>
 
-          <form
-            className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-2.5"
-            onSubmit={(event) => {
-              event.preventDefault();
-              const command = jarvisCommandInput;
-              setJarvisCommandInput('');
-              void handleRunJarvisCommand(command);
-            }}
-          >
-            <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Command Console</p>
-            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-              <input
-                value={jarvisCommandInput}
-                onChange={(event) => setJarvisCommandInput(event.target.value)}
-                placeholder='Type command, e.g. "open todo"'
-                className="h-9 flex-1 rounded-lg border border-slate-700 bg-panelAlt px-3 text-sm text-slate-100 outline-none transition focus:border-cyan-300/45"
-              />
-              <Button type="submit" variant="secondary" className="h-9 px-3 text-xs" disabled={isJarvisExecutingCommand}>
-                {isJarvisExecutingCommand ? 'Executing...' : 'Execute'}
-              </Button>
-            </div>
-            <p className="mt-2 text-xs text-cyan-100">{jarvisCommandOutput}</p>
-            {jarvisCommandHistory.length > 0 ? (
-              <p className="mt-1 text-[11px] text-slate-400">Recent: {jarvisCommandHistory.join(' | ')}</p>
-            ) : null}
-          </form>
-
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
               <p className="text-[11px] uppercase tracking-wide text-slate-400">Overdue</p>
@@ -723,45 +627,6 @@ export function DashboardPage() {
               {companionError}
             </div>
           ) : null}
-
-          <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
-            <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Threat Matrix</p>
-            {jarvisRiskAlerts.length === 0 ? (
-              <p className="mt-1 text-xs text-slate-300">No immediate threats detected.</p>
-            ) : (
-              <ul className="mt-2 space-y-1.5">
-                {jarvisRiskAlerts.map((alert) => (
-                  <li key={alert.id} className="flex items-start justify-between gap-2 rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-2">
-                    <p className="text-xs text-slate-200">{alert.message}</p>
-                    <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${jarvisRiskBadgeClass(alert.level)}`}>
-                      {alert.level}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
-            <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Autopilot Runbook (Next 6 Hours)</p>
-            {jarvisRunbook.length === 0 ? (
-              <p className="mt-1 text-xs text-slate-300">No high-priority action in the next 6 hours.</p>
-            ) : (
-              <ol className="mt-2 space-y-1.5">
-                {jarvisRunbook.map((item) => (
-                  <li key={`runbook-${item.id}`} className="rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-xs text-slate-100">{item.title}</p>
-                      <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
-                        {item.etaLabel}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 text-[11px] text-slate-400">{item.detail}</p>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </div>
 
           {jarvisTimeBuckets.some((bucket) => bucket.items.length > 0) ? (
             <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -993,115 +858,6 @@ function summarizeJarvisPriorities(agendaItems: CompanionAgendaItem[], nowMs: nu
   return { overdueCount, underHourCount, highPriorityCount };
 }
 
-function buildJarvisRiskAlerts(
-  agendaItems: CompanionAgendaItem[],
-  nowMs: number,
-  dailySummary: DailyProductivitySummaryResult | null
-): JarvisRiskAlert[] {
-  const alerts: JarvisRiskAlert[] = [];
-  const overdueCount = agendaItems.filter((item) => item.status === 'overdue').length;
-  if (overdueCount > 0) {
-    alerts.push({
-      id: 'overdue-actions',
-      level: 'critical',
-      message: `${overdueCount} action${overdueCount === 1 ? '' : 's'} are overdue. Clear these first.`
-    });
-  }
-
-  const startingSoon = agendaItems.filter((item) => {
-    if (item.at === null) return false;
-    const minutes = minutesUntilAction(item, nowMs);
-    return minutes >= 0 && minutes <= 15;
-  }).length;
-  if (startingSoon > 0) {
-    alerts.push({
-      id: 'starting-soon',
-      level: 'critical',
-      message: `${startingSoon} timed action${startingSoon === 1 ? '' : 's'} start within 15 minutes.`
-    });
-  }
-
-  const underHour = agendaItems.filter((item) => {
-    if (item.at === null) return false;
-    const minutes = minutesUntilAction(item, nowMs);
-    return minutes > 15 && minutes <= 60;
-  }).length;
-  if (underHour > 0) {
-    alerts.push({
-      id: 'under-hour',
-      level: 'watch',
-      message: `${underHour} action${underHour === 1 ? '' : 's'} are due within the next hour.`
-    });
-  }
-
-  if (dailySummary && dailySummary.riskItems.length > 0) {
-    alerts.push({
-      id: 'ai-risk',
-      level: 'watch',
-      message: `AI watchlist: ${dailySummary.riskItems.slice(0, 2).join(' | ')}`
-    });
-  }
-
-  if (alerts.length === 0 && agendaItems.length > 0) {
-    alerts.push({
-      id: 'stable',
-      level: 'info',
-      message: 'No hard blockers detected. Continue execution sequence.'
-    });
-  }
-
-  return alerts.slice(0, 5);
-}
-
-function buildJarvisRunbook(agendaItems: CompanionAgendaItem[], nowMs: number): JarvisRunbookItem[] {
-  const sixHoursFromNow = nowMs + 6 * 60 * 60 * 1000;
-
-  return agendaItems
-    .filter((item) => item.status === 'overdue' || item.at === null || item.at <= sixHoursFromNow)
-    .map((item) => {
-      const minutes = minutesUntilAction(item, nowMs);
-      let priorityScore = 0;
-      if (item.status === 'overdue') priorityScore += 1000;
-      if (item.at !== null) {
-        if (minutes <= 0) priorityScore += 900;
-        else if (minutes <= 15) priorityScore += 700;
-        else if (minutes <= 60) priorityScore += 520;
-        else if (minutes <= 180) priorityScore += 320;
-        else if (minutes <= 360) priorityScore += 180;
-      } else {
-        priorityScore += 120;
-      }
-
-      if (item.kind === 'reminder') priorityScore += 260;
-      if (item.kind === 'mint') priorityScore += 190;
-      if (item.kind === 'task') priorityScore += 140;
-      if (item.detail.toLowerCase().includes('high priority')) priorityScore += 120;
-
-      let etaLabel = 'Anytime';
-      if (item.status === 'overdue') {
-        etaLabel = 'Overdue';
-      } else if (item.at !== null) {
-        if (minutes <= 0) etaLabel = 'Now';
-        else if (minutes < 60) etaLabel = `In ${minutes}m`;
-        else etaLabel = `In ${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-      }
-
-      return {
-        ...item,
-        priorityScore,
-        etaLabel
-      };
-    })
-    .sort((a, b) => b.priorityScore - a.priorityScore)
-    .slice(0, 8);
-}
-
-function jarvisRiskBadgeClass(level: JarvisRiskLevel) {
-  if (level === 'critical') return 'border-rose-300/40 bg-rose-300/10 text-rose-200';
-  if (level === 'watch') return 'border-amber-300/40 bg-amber-300/10 text-amber-200';
-  return 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200';
-}
-
 function buildJarvisBriefing(operatorName: string, nowMs: number, agendaItems: CompanionAgendaItem[]): JarvisBriefing {
   const greeting = `${buildCompanionGreeting(operatorName, nowMs)} JARVIS online.`;
   if (agendaItems.length === 0) {
@@ -1224,25 +980,6 @@ function resolveJarvisWindowKey(timestamp: number | null): JarvisTimeWindowKey {
 function getIstHour(timestamp: number) {
   const shifted = new Date(timestamp + 330 * 60 * 1000);
   return shifted.getUTCHours();
-}
-
-function matchesJarvisCommand(normalizedInput: string, variants: string[]) {
-  return variants.some((variant) => normalizedInput === variant || normalizedInput.includes(variant));
-}
-
-function resolveJarvisRoute(normalizedInput: string): string | null {
-  if (normalizedInput.includes('dashboard') || normalizedInput.includes('overview')) return '/dashboard';
-  if (normalizedInput.includes('analytics')) return '/analytics';
-  if (normalizedInput.includes('nft') || normalizedInput.includes('mint')) return '/nft-mints';
-  if (normalizedInput.includes('project') || normalizedInput.includes('testnet')) return '/farming';
-  if (normalizedInput.includes('todo') || normalizedInput.includes('task')) return '/todo';
-  if (normalizedInput.includes('wallet')) return '/wallet-tracker';
-  if (normalizedInput.includes('bug')) return '/bugs';
-  if (normalizedInput.includes('api cost') || normalizedInput.includes('api-cost') || normalizedInput.includes('cost')) {
-    return '/api-costs';
-  }
-  if (normalizedInput.includes('setting')) return '/settings';
-  return null;
 }
 
 function priorityLabel(priority: TodoTaskRecord['priority']) {
