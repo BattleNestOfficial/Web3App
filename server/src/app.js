@@ -13,7 +13,7 @@ app.use(morgan('dev'));
 
 app.get('/', (_req, res) => {
   res.json({
-    service: 'crimson-console-backend',
+    service: 'battlenest-web3os-backend',
     status: 'ok',
     apiBase: '/api',
     health: '/health',

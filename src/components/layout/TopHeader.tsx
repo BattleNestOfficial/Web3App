@@ -18,19 +18,20 @@ function getInitials(nameOrEmail: string) {
 }
 
 function getPageMeta(pathname: string) {
-  if (pathname.startsWith('/dashboard')) return { title: 'Operations Hub', subtitle: 'Realtime overview' };
-  if (pathname.startsWith('/analytics')) return { title: 'Analytics Matrix', subtitle: 'Behavior + trend intelligence' };
+  if (pathname.startsWith('/dashboard')) return { title: 'Web3OS Command Deck', subtitle: 'Realtime mission overview' };
+  if (pathname.startsWith('/analytics')) return { title: 'Analytics Matrix', subtitle: 'Portfolio + behavior intelligence' };
   if (pathname.startsWith('/nft-mints') || pathname.startsWith('/mints'))
-    return { title: 'NFT Mint Tracker', subtitle: 'Mints, reminders, countdowns' };
+    return { title: 'NFT Mint Scheduler', subtitle: 'Mints, reminders, countdowns' };
   if (pathname.startsWith('/farming'))
-    return { title: 'Projects / Testnets', subtitle: 'Track projects, testnets, tasks, and claim windows' };
-  if (pathname.startsWith('/todo')) return { title: 'To-Do', subtitle: 'Personal task execution center' };
+    return { title: 'Projects / Testnets', subtitle: 'Projects, testnets, claims, and execution' };
+  if (pathname.startsWith('/todo')) return { title: 'Task Ops', subtitle: 'Execution queue and day planner' };
   if (pathname.startsWith('/wallet-tracker'))
-    return { title: 'Wallet Tracker', subtitle: 'Track OpenSea buy/sell/mint events with alerts' };
-  if (pathname.startsWith('/bugs')) return { title: 'Bug Tracker', subtitle: 'Issue lifecycle and triage flow' };
-  if (pathname.startsWith('/projects')) return { title: 'Projects', subtitle: 'Project-level workspace control' };
-  if (pathname.startsWith('/settings')) return { title: 'Settings', subtitle: 'Configuration and account controls' };
-  return { title: 'Crimson Console', subtitle: 'Mission control' };
+    return { title: 'Wallet Surveillance', subtitle: 'Track wallet events and alert signals' };
+  if (pathname.startsWith('/bugs')) return { title: 'Bug Tracker', subtitle: 'Issue triage and incident lifecycle' };
+  if (pathname.startsWith('/api-costs')) return { title: 'API Cost Tracker', subtitle: 'Provider spend observability' };
+  if (pathname.startsWith('/projects')) return { title: 'Project Hub', subtitle: 'Project-level workspace control' };
+  if (pathname.startsWith('/settings')) return { title: 'System Settings', subtitle: 'Runtime and account configuration' };
+  return { title: 'BattleNest Web3OS', subtitle: 'Autonomous mission control' };
 }
 
 export function TopHeader({ leadingAction }: TopHeaderProps) {

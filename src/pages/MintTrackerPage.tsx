@@ -72,14 +72,37 @@ export function MintTrackerPage() {
   const now = useNow(1000);
   const marketplaceProviderIssues = useMemo(() => {
     if (!marketplaceMeta) return [];
+    const shorten = (value: string) => {
+      const text = String(value ?? '').trim();
+      return text.length > 220 ? `${text.slice(0, 220)}...` : text;
+    };
     const issues: string[] = [];
     if (!marketplaceMeta.providers.magiceden.ok && marketplaceMeta.providers.magiceden.error) {
-      issues.push(`Magic Eden: ${marketplaceMeta.providers.magiceden.error}`);
+      issues.push(`Magic Eden: ${shorten(marketplaceMeta.providers.magiceden.error)}`);
     }
     if (!marketplaceMeta.providers.opensea.ok && marketplaceMeta.providers.opensea.error) {
-      issues.push(`OpenSea: ${marketplaceMeta.providers.opensea.error}`);
+      issues.push(`OpenSea: ${shorten(marketplaceMeta.providers.opensea.error)}`);
     }
     return issues;
+  }, [marketplaceMeta]);
+  const marketplaceProviderTips = useMemo(() => {
+    const tips: string[] = [];
+    const openSeaError = marketplaceMeta?.providers.opensea.error ?? '';
+    const magicEdenError = marketplaceMeta?.providers.magiceden.error ?? '';
+
+    if (/cloudflare|anti-bot|just a moment|403/i.test(openSeaError)) {
+      tips.push('OpenSea is blocking server-side page scraping. Set OPENSEA_API_KEY in backend env to enable API access.');
+    } else if (/missing opensea_api_key|access denied|401|403/i.test(openSeaError)) {
+      tips.push('OpenSea API key is missing/invalid. Configure OPENSEA_API_KEY in backend env.');
+    }
+
+    if (/limit must be between 1 and 100/i.test(magicEdenError)) {
+      tips.push('Magic Eden request window was rejected previously. Refresh after backend redeploy with updated limit handling.');
+    } else if (/unauthorized|401|403/i.test(magicEdenError)) {
+      tips.push('Magic Eden endpoint requires authentication for this region. Configure MAGICEDEN_API_KEY in backend env.');
+    }
+
+    return Array.from(new Set(tips));
   }, [marketplaceMeta]);
 
   const mints = useLiveQuery(
@@ -311,7 +334,7 @@ export function MintTrackerPage() {
     <section className="mx-auto max-w-7xl">
       <header className="mb-6">
         <p className="text-xs uppercase tracking-[0.2em] text-slate-400">NFT Mints</p>
-        <h2 className="mt-1 font-display text-2xl text-white sm:text-3xl">NFT Mint Tracker</h2>
+        <h2 className="mt-1 font-display text-2xl text-white sm:text-3xl">NFT Mint Scheduler</h2>
       </header>
 
       <div className="grid gap-4 lg:grid-cols-[1.05fr_1.6fr]">
@@ -553,6 +576,16 @@ export function MintTrackerPage() {
                 </ul>
               </div>
             ) : null}
+            {marketplaceProviderTips.length > 0 ? (
+              <div className="mb-3 rounded-xl border border-cyan-300/35 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
+                <p className="mb-1 font-semibold uppercase tracking-wide">Fix Tips</p>
+                <ul className="space-y-1">
+                  {marketplaceProviderTips.map((tip) => (
+                    <li key={tip}>{tip}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
 
             {isMarketplaceLoading ? (
               <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-5 text-sm text-slate-300">
@@ -562,7 +595,7 @@ export function MintTrackerPage() {
               <div className="rounded-2xl border border-dashed border-slate-700/80 bg-panel/60 px-3 py-5 text-sm text-slate-300">
                 No upcoming marketplace mints found for the selected window.
                 {marketplaceProviderIssues.length > 0
-                  ? ' Provider errors are shown above. Verify OPENSEA_API_KEY / MAGICEDEN_API_KEY in backend env.'
+                  ? ' Provider errors are shown above. Verify OPENSEA_API_KEY / MAGICEDEN_API_KEY and refresh.'
                   : ''}
               </div>
             ) : (

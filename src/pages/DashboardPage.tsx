@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { motion } from 'framer-motion';
-import { Brain, CalendarClock, CheckCircle2, Clock3, ExternalLink } from 'lucide-react';
+import { AlertTriangle, Brain, CalendarClock, CheckCircle2, Clock3, ExternalLink, Layers3, Target } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -404,6 +404,111 @@ export function DashboardPage() {
     () => summarizeJarvisPriorities(modeCompanionAgenda, nowTick),
     [modeCompanionAgenda, nowTick]
   );
+  const farmingOps = useMemo(() => {
+    const activeProjects = localFarmingProjects.filter((project) => project.deletedAt === null);
+    const avgProgress =
+      activeProjects.length === 0
+        ? 0
+        : Math.round(activeProjects.reduce((total, project) => total + project.progress, 0) / activeProjects.length);
+    const claimsDue24h = activeProjects.filter((project) => {
+      if (project.claimAt === null) return false;
+      return project.claimAt >= nowTick && project.claimAt <= nowTick + 24 * 60 * 60 * 1000;
+    }).length;
+    const staleProjects = activeProjects.filter((project) => nowTick - project.updatedAt > 72 * 60 * 60 * 1000).length;
+    return {
+      activeCount: activeProjects.length,
+      avgProgress,
+      claimsDue24h,
+      staleProjects
+    };
+  }, [localFarmingProjects, nowTick]);
+  const alertBusItems = useMemo(() => {
+    return modeCompanionAgenda
+      .filter((item) => {
+        if (item.status === 'overdue') return true;
+        if (item.at === null) return false;
+        const minutes = Math.floor((item.at - nowTick) / 60_000);
+        return minutes >= 0 && minutes <= 120;
+      })
+      .slice(0, 6)
+      .map((item) => {
+        const route = item.kind === 'task' ? '/todo' : item.kind === 'mint' ? '/nft-mints' : '/nft-mints';
+        const severity: 'critical' | 'watch' | 'normal' =
+          item.status === 'overdue' ? 'critical' : item.kind === 'reminder' ? 'critical' : 'watch';
+        return {
+          ...item,
+          route,
+          severity
+        };
+      });
+  }, [modeCompanionAgenda, nowTick]);
+  const missionReadiness = useMemo(() => {
+    let score = 100;
+    score -= jarvisPriorityStats.overdueCount * 15;
+    score -= Math.max(0, jarvisPriorityStats.underHourCount - 1) * 6;
+    score -= farmingOps.staleProjects * 8;
+    if (!nextTrackedMint) score -= 6;
+    if (tasksToday.length === 0) score -= 4;
+    return Math.max(0, Math.min(100, score));
+  }, [farmingOps.staleProjects, jarvisPriorityStats.overdueCount, jarvisPriorityStats.underHourCount, nextTrackedMint, tasksToday.length]);
+  const jarvisDirectives = useMemo(() => {
+    const directives: Array<{ id: string; title: string; detail: string; route: string; severity: 'critical' | 'watch' | 'normal' }> = [];
+
+    if (jarvisPriorityStats.overdueCount > 0) {
+      directives.push({
+        id: 'overdue-focus',
+        title: 'Clear overdue queue first',
+        detail: `${jarvisPriorityStats.overdueCount} overdue action(s) require immediate execution.`,
+        route: '/todo',
+        severity: 'critical'
+      });
+    }
+
+    if (nextTrackedMint) {
+      directives.push({
+        id: 'mint-window',
+        title: 'Prepare next mint window',
+        detail: `${nextTrackedMint.name} ${formatTimeUntil(nextTrackedMint.mintAt, nowTick).toLowerCase()}.`,
+        route: '/nft-mints',
+        severity: 'watch'
+      });
+    }
+
+    if (farmingOps.claimsDue24h > 0 || farmingOps.staleProjects > 0) {
+      directives.push({
+        id: 'farming-focus',
+        title: 'Run project/testnet maintenance',
+        detail:
+          farmingOps.claimsDue24h > 0
+            ? `${farmingOps.claimsDue24h} claim window(s) due in 24h.`
+            : `${farmingOps.staleProjects} stale project(s) need updates.`,
+        route: '/farming',
+        severity: farmingOps.claimsDue24h > 0 ? 'watch' : 'normal'
+      });
+    }
+
+    if (walletPulse.sellCount > walletPulse.buyCount) {
+      directives.push({
+        id: 'wallet-balance',
+        title: 'Review wallet outflow trend',
+        detail: `24h sells (${walletPulse.sellCount}) exceed buys (${walletPulse.buyCount}).`,
+        route: '/wallet-tracker',
+        severity: 'watch'
+      });
+    }
+
+    if (directives.length === 0) {
+      directives.push({
+        id: 'steady-state',
+        title: 'System steady',
+        detail: 'No critical pressure detected. Continue planned execution cadence.',
+        route: '/dashboard',
+        severity: 'normal'
+      });
+    }
+
+    return directives.slice(0, 4);
+  }, [farmingOps.claimsDue24h, farmingOps.staleProjects, jarvisPriorityStats.overdueCount, nextTrackedMint, nowTick, walletPulse.buyCount, walletPulse.sellCount]);
 
   useEffect(() => {
     persistFlag('jarvis_automation_enabled', jarvisAutomationEnabled);
@@ -538,7 +643,7 @@ export function DashboardPage() {
         transition={{ type: 'spring', stiffness: 170, damping: 24 }}
         className="mb-6"
       >
-        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Dashboard</p>
+        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Web3OS Command Deck</p>
         <h2 className="text-gradient mt-1 font-display text-2xl sm:text-3xl">Welcome back, {operatorName}</h2>
       </motion.header>
 
@@ -643,6 +748,64 @@ export function DashboardPage() {
           </div>
         </GlassCard>
 
+        <GlassCard title="Alert Bus" icon={<AlertTriangle className="h-4 w-4" />} className="lg:col-span-6">
+          {alertBusItems.length === 0 ? (
+            <p className="text-sm text-slate-300">No critical alerts in the next 2 hours.</p>
+          ) : (
+            <ul className="space-y-2">
+              {alertBusItems.map((item) => (
+                <li
+                  key={`alert-${item.id}`}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                          item.severity === 'critical'
+                            ? 'border border-rose-300/40 bg-rose-300/10 text-rose-200'
+                            : item.severity === 'watch'
+                              ? 'border border-amber-300/40 bg-amber-300/10 text-amber-200'
+                              : 'border border-slate-500/50 bg-slate-500/10 text-slate-200'
+                        }`}
+                      >
+                        {item.severity}
+                      </span>
+                      <p className="truncate text-sm text-white">{item.title}</p>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-400">{item.detail}</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-8 px-2.5 text-xs"
+                    onClick={() => navigate(item.route)}
+                  >
+                    Open
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </GlassCard>
+
+        <GlassCard title="Project / Testnet Ops" icon={<Layers3 className="h-4 w-4" />} className="lg:col-span-6">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <MetricPill label="Active Projects" value={String(farmingOps.activeCount)} />
+            <MetricPill label="Avg Progress" value={`${farmingOps.avgProgress}%`} />
+            <MetricPill label="Claims Due (24h)" value={String(farmingOps.claimsDue24h)} />
+            <MetricPill label="Stale (>72h)" value={String(farmingOps.staleProjects)} />
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" className="h-8 px-2.5 text-xs" onClick={() => navigate('/farming')}>
+              Open Projects / Testnets
+            </Button>
+            <Button type="button" variant="ghost" className="h-8 px-2.5 text-xs" onClick={() => navigate('/todo')}>
+              Queue Follow-up Tasks
+            </Button>
+          </div>
+        </GlassCard>
+
         <GlassCard title="Web3OS Pulse" className="lg:col-span-6">
           <div className="grid gap-2 sm:grid-cols-2">
             <MetricPill label="Mints (24h)" value={String(resolvedDailySummary.metrics.mintsUpcoming24h)} />
@@ -660,7 +823,7 @@ export function DashboardPage() {
           {walletPulseError ? <p className="mt-1 text-xs text-amber-200">{walletPulseError}</p> : null}
         </GlassCard>
 
-        <GlassCard title="Quick Launchpad" className="lg:col-span-6">
+        <GlassCard title="Quick Launchpad" icon={<Target className="h-4 w-4" />} className="lg:col-span-6">
           <div className="grid gap-2 sm:grid-cols-2">
             <Button type="button" variant="secondary" className="h-9 justify-start px-3 text-xs" onClick={() => navigate('/nft-mints')}>
               Add Mint Schedule
@@ -707,6 +870,17 @@ export function DashboardPage() {
               This day plan is generated from your NFT Mint Tracker + Task Planner for the current IST day.
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span
+                className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                  missionReadiness >= 80
+                    ? 'border-emerald-300/40 bg-emerald-300/10 text-emerald-200'
+                    : missionReadiness >= 55
+                      ? 'border-amber-300/40 bg-amber-300/10 text-amber-200'
+                      : 'border-rose-300/40 bg-rose-300/10 text-rose-200'
+                }`}
+              >
+                Mission Readiness {missionReadiness}%
+              </span>
               <span
                 className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
                   jarvisAutomationEnabled
@@ -820,6 +994,44 @@ export function DashboardPage() {
               <p className="text-[11px] uppercase tracking-wide text-slate-400">High Priority Queue</p>
               <p className="mt-1 text-sm text-cyan-200">{jarvisPriorityStats.highPriorityCount}</p>
             </div>
+          </div>
+
+          <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+            <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">Tactical Directives</p>
+            <ul className="mt-2 space-y-1.5">
+              {jarvisDirectives.map((directive) => (
+                <li
+                  key={directive.id}
+                  className="rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="truncate text-xs text-slate-100">{directive.title}</p>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                        directive.severity === 'critical'
+                          ? 'border border-rose-300/40 bg-rose-300/10 text-rose-200'
+                          : directive.severity === 'watch'
+                            ? 'border border-amber-300/40 bg-amber-300/10 text-amber-200'
+                            : 'border border-slate-500/50 bg-slate-500/10 text-slate-200'
+                      }`}
+                    >
+                      {directive.severity}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-slate-400">{directive.detail}</p>
+                  <div className="mt-1.5">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-7 px-2 text-[11px]"
+                      onClick={() => navigate(directive.route)}
+                    >
+                      Execute
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
           </div>
 
           {companionError ? (

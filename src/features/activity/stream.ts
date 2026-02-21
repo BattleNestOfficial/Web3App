@@ -40,6 +40,33 @@ function sourceLabel(source: AppActivitySource) {
   return 'Bug Tracker';
 }
 
+function isActionEvent(actionValue: string, titleValue: string) {
+  const action = normalizeText(actionValue).toLowerCase().replace(/[\s-]+/g, '_');
+  const title = normalizeText(titleValue).toLowerCase();
+
+  if (!action && !title) return false;
+  if (action === 'view_page' || action === 'page_view' || title === 'page viewed') return false;
+
+  if (
+    action.startsWith('create_') ||
+    action.startsWith('update_') ||
+    action.startsWith('delete_') ||
+    action.startsWith('remove_')
+  ) {
+    return true;
+  }
+
+  if (action.startsWith('set_') && action.endsWith('_status')) {
+    return true;
+  }
+
+  if (action.includes('complete') || action.includes('completed')) {
+    return true;
+  }
+
+  return /(created|updated|deleted|removed|status|completed)/.test(title);
+}
+
 function fromWalletEvent(event: WalletActivityEvent): TrackedActivityEntry | null {
   const type = normalizeText(event.event_type).toLowerCase();
   if (type !== 'mint' && type !== 'sell') {
@@ -100,7 +127,7 @@ function fromAppEvent(event: AppActivityEvent): TrackedActivityEntry | null {
 
   const action = normalizeText(event.action).toLowerCase();
   const titleText = normalizeText(event.title).toLowerCase();
-  if (action === 'view_page' || action === 'page_view' || titleText === 'page viewed') {
+  if (!isActionEvent(action, titleText)) {
     return null;
   }
 

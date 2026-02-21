@@ -55,6 +55,27 @@ function compactString(value) {
   return text || null;
 }
 
+function summarizeHttpBody(body, maxLen = 220) {
+  const text = String(body ?? '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  return text.length > maxLen ? `${text.slice(0, maxLen)}...` : text;
+}
+
+function summarizeErrorMessage(error) {
+  const text = String(error?.message ?? error ?? '').trim();
+  if (!text) return 'Unknown provider error.';
+  if (/<\/?[a-z][\s\S]*>/i.test(text)) {
+    const cleaned = summarizeHttpBody(text, 180);
+    return cleaned || 'Provider returned an HTML response.';
+  }
+  return text.length > 260 ? `${text.slice(0, 260)}...` : text;
+}
+
 function parseJsonObjectAt(html, startIndex) {
   let depth = 0;
   let inString = false;
@@ -221,9 +242,12 @@ function mapOpenSeaDrop(drop, nowMs) {
 async function fetchMagicEdenUpcomingMints({ limit, fromMs, toMs }) {
   const apiBase = env.walletTracker.magiceden.apiBaseUrl.replace(/\/+$/, '');
   const apiKey = env.walletTracker.magiceden.apiKey;
+  const pageSize = Math.max(20, Math.min(100, Math.ceil(limit * 2)));
   const endpoints = [
-    `${apiBase}/v2/launchpad/collections?offset=0&limit=${Math.max(20, Math.min(200, limit * 4))}`,
-    `${apiBase}/v2/launchpad/collections?limit=${Math.max(20, Math.min(200, limit * 4))}`
+    `${apiBase}/v2/launchpad/collections?offset=0&limit=${pageSize}`,
+    `${apiBase}/v2/launchpad/collections?limit=${pageSize}`,
+    `${apiBase}/v2/launchpad/collections?window=upcoming&limit=${pageSize}`,
+    `${apiBase}/v2/launchpad/collections?sort=launchDate&direction=asc&limit=${pageSize}`
   ];
 
   let lastError = null;
@@ -270,7 +294,8 @@ async function fetchMagicEdenUpcomingMints({ limit, fromMs, toMs }) {
 
     if (!response.ok) {
       const body = await response.text();
-      lastError = `Magic Eden request failed (${response.status}): ${body || 'unknown error'}`;
+      const detail = summarizeHttpBody(body);
+      lastError = `Magic Eden request failed (${response.status})${detail ? `: ${detail}` : ''}`;
       continue;
     }
 
@@ -336,7 +361,17 @@ async function fetchOpenSeaUpcomingMints({ limit, fromMs, toMs }) {
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`OpenSea drops page request failed (${response.status}): ${body || 'unknown error'}`);
+    const detail = summarizeHttpBody(body);
+    const cloudflareBlocked =
+      response.status === 403 && /just a moment|cf_chl|cloudflare|__cf_chl/i.test(String(body));
+    if (cloudflareBlocked) {
+      throw new Error(
+        'OpenSea HTML fallback blocked by Cloudflare (403). Configure OPENSEA_API_KEY so OpenSea API can be used.'
+      );
+    }
+    throw new Error(
+      `OpenSea drops page request failed (${response.status})${detail ? `: ${detail}` : ''}`
+    );
   }
 
   const html = await response.text();
@@ -468,15 +503,36 @@ async function fetchOpenSeaUpcomingMintsFromApi({ limit, fromMs, toMs }) {
     `${OPEN_SEA_API_BASE_URL}/drops?upcoming=true&limit=${Math.max(20, Math.min(100, limit * 3))}`
   ];
 
+  let authError = null;
+  let lastError = null;
+
   for (const endpoint of endpoints) {
     const startedAt = Date.now();
-    const response = await fetch(endpoint, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        ...(apiKey ? { 'x-api-key': apiKey } : {})
-      }
-    });
+    let response;
+    try {
+      response = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          ...(apiKey ? { 'x-api-key': apiKey } : {})
+        }
+      });
+    } catch (error) {
+      void recordApiUsageSafely({
+        providerKey: 'opensea',
+        operation: 'marketplace_upcoming_mints_api',
+        endpoint,
+        requestCount: 1,
+        success: false,
+        metadata: {
+          service: 'marketplace_mint_calendar',
+          durationMs: Date.now() - startedAt,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      });
+      lastError = `OpenSea API request failed: ${error instanceof Error ? error.message : String(error)}`;
+      continue;
+    }
 
     void recordApiUsageSafely({
       providerKey: 'opensea',
@@ -492,6 +548,15 @@ async function fetchOpenSeaUpcomingMintsFromApi({ limit, fromMs, toMs }) {
     });
 
     if (!response.ok) {
+      const body = await response.text();
+      const detail = summarizeHttpBody(body);
+      if (response.status === 401 || response.status === 403) {
+        authError = `OpenSea API access denied (${response.status})${
+          apiKey ? '. Check OPENSEA_API_KEY validity and plan access.' : '. Missing OPENSEA_API_KEY.'
+        }`;
+        continue;
+      }
+      lastError = `OpenSea API request failed (${response.status})${detail ? `: ${detail}` : ''}`;
       continue;
     }
 
@@ -516,6 +581,12 @@ async function fetchOpenSeaUpcomingMintsFromApi({ limit, fromMs, toMs }) {
     ).slice(0, limit);
   }
 
+  if (authError) {
+    throw new Error(authError);
+  }
+  if (lastError) {
+    throw new Error(lastError);
+  }
   return [];
 }
 
@@ -534,12 +605,12 @@ export async function getUpcomingMarketplaceMints(options = {}) {
     magiceden: {
       ok: magicEdenResult.status === 'fulfilled',
       count: magicEdenResult.status === 'fulfilled' ? magicEdenResult.value.length : 0,
-      error: magicEdenResult.status === 'rejected' ? String(magicEdenResult.reason?.message ?? magicEdenResult.reason) : null
+      error: magicEdenResult.status === 'rejected' ? summarizeErrorMessage(magicEdenResult.reason) : null
     },
     opensea: {
       ok: openSeaResult.status === 'fulfilled',
       count: openSeaResult.status === 'fulfilled' ? openSeaResult.value.length : 0,
-      error: openSeaResult.status === 'rejected' ? String(openSeaResult.reason?.message ?? openSeaResult.reason) : null
+      error: openSeaResult.status === 'rejected' ? summarizeErrorMessage(openSeaResult.reason) : null
     }
   };
 

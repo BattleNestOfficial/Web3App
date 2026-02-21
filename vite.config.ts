@@ -18,8 +18,8 @@ export default defineConfig({
       includeAssets: ['robots.txt', 'pwa-192x192.png', 'pwa-512x512.png', 'apple-touch-icon.png'],
       manifest: {
         id: '/',
-        name: 'Crimson Console',
-        short_name: 'CrimsonOS',
+        name: 'BattleNest Web3OS',
+        short_name: 'Web3OS',
         description: 'Web3OS mission control for mints, tasks, projects, wallet events, and operations.',
         theme_color: '#05050a',
         background_color: '#05050a',

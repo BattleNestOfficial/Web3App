@@ -1,19 +1,40 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { BarChart3, Bug, Clock3, Gauge, ListTodo, Settings, Sprout, Wallet, X } from 'lucide-react';
-import { useEffect } from 'react';
+import {
+  BarChart3,
+  Bug,
+  CalendarClock,
+  Gauge,
+  ListTodo,
+  ReceiptText,
+  Settings,
+  ShieldCheck,
+  Sprout,
+  Wallet,
+  X
+} from 'lucide-react';
+import { useMemo, useEffect } from 'react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '../../lib/cn';
 
-const items = [
-  { label: 'Overview', to: '/dashboard', icon: Gauge },
-  { label: 'Analytics', to: '/analytics', icon: BarChart3 },
-  { label: 'NFT Mint Tracker', to: '/nft-mints', icon: Clock3 },
-  { label: 'Projects / Testnets', to: '/farming', icon: Sprout },
-  { label: 'To-Do', to: '/todo', icon: ListTodo },
-  { label: 'Wallet Tracker', to: '/wallet-tracker', icon: Wallet },
-  { label: 'Bug Tracker', to: '/bugs', icon: Bug },
-  { label: 'API Cost Tracker', to: '/api-costs', icon: BarChart3 },
-  { label: 'Settings', to: '/settings', icon: Settings }
+type SidebarSection = 'Command' | 'Execution' | 'System';
+
+type SidebarItem = {
+  label: string;
+  to: string;
+  icon: typeof Gauge;
+  section: SidebarSection;
+};
+
+const items: SidebarItem[] = [
+  { label: 'Overview', to: '/dashboard', icon: Gauge, section: 'Command' },
+  { label: 'Analytics', to: '/analytics', icon: BarChart3, section: 'Command' },
+  { label: 'Wallet Tracker', to: '/wallet-tracker', icon: Wallet, section: 'Command' },
+  { label: 'NFT Mint Scheduler', to: '/nft-mints', icon: CalendarClock, section: 'Execution' },
+  { label: 'Projects / Testnets', to: '/farming', icon: Sprout, section: 'Execution' },
+  { label: 'To-Do Ops', to: '/todo', icon: ListTodo, section: 'Execution' },
+  { label: 'Bug Tracker', to: '/bugs', icon: Bug, section: 'System' },
+  { label: 'API Cost Tracker', to: '/api-costs', icon: ReceiptText, section: 'System' },
+  { label: 'Settings', to: '/settings', icon: Settings, section: 'System' }
 ];
 
 type SidebarProps = {
@@ -37,6 +58,15 @@ const navItemVariants = {
 };
 
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
+  const groupedItems = useMemo(
+    () =>
+      (['Command', 'Execution', 'System'] as SidebarSection[]).map((section) => ({
+        section,
+        rows: items.filter((item) => item.section === section)
+      })),
+    []
+  );
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -55,42 +85,52 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 border-r border-slate-800/70 bg-panel/95 backdrop-blur-xl md:block">
         <div className="flex h-full flex-col px-6 py-5">
           <div className="mb-8">
-            <p className="font-display text-lg font-semibold tracking-wide text-white">Crimson Console</p>
-            <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Mission Control</p>
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-cyan-200" />
+              <p className="font-display text-lg font-semibold tracking-wide text-white">BattleNest Web3OS</p>
+            </div>
+            <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Autonomous Mission Core</p>
           </div>
 
-          <motion.nav variants={navContainerVariants} initial="hidden" animate="show" className="space-y-2">
-            {items.map((item) => {
-              const Icon = item.icon;
-              return (
-                <NavLink
-                  key={`desktop-${item.to}`}
-                  to={item.to}
-                  className={({ isActive }) =>
-                    cn(
-                      'group relative flex items-center gap-3 overflow-hidden rounded-xl border px-4 py-3 text-sm transition',
-                      isActive
-                        ? 'border-glow/60 bg-glow/12 text-white shadow-glow'
-                        : 'border-slate-800/80 bg-panelAlt text-slate-300 hover:border-slate-600 hover:text-white'
-                    )
-                  }
-                >
-                  {({ isActive }) => (
-                    <motion.div variants={navItemVariants} className="relative flex w-full items-center gap-3">
-                      {isActive ? (
-                        <motion.span
-                          layoutId="desktop-nav-active-pill"
-                          className="absolute inset-0 -z-10 rounded-lg bg-gradient-to-r from-red-400/22 to-rose-500/22"
-                          transition={{ type: 'spring', stiffness: 280, damping: 28 }}
-                        />
-                      ) : null}
-                      <Icon className="h-4 w-4 transition group-hover:scale-105" />
-                      <span>{item.label}</span>
-                    </motion.div>
-                  )}
-                </NavLink>
-              );
-            })}
+          <motion.nav variants={navContainerVariants} initial="hidden" animate="show" className="space-y-4">
+            {groupedItems.map((group) => (
+              <div key={`desktop-group-${group.section}`}>
+                <p className="mb-2 px-2 text-[10px] uppercase tracking-[0.18em] text-slate-500">{group.section}</p>
+                <div className="space-y-2">
+                  {group.rows.map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <NavLink
+                        key={`desktop-${item.to}`}
+                        to={item.to}
+                        className={({ isActive }) =>
+                          cn(
+                            'group relative flex items-center gap-3 overflow-hidden rounded-xl border px-4 py-3 text-sm transition',
+                            isActive
+                              ? 'border-glow/60 bg-glow/12 text-white shadow-glow'
+                              : 'border-slate-800/80 bg-panelAlt text-slate-300 hover:border-slate-600 hover:text-white'
+                          )
+                        }
+                      >
+                        {({ isActive }) => (
+                          <motion.div variants={navItemVariants} className="relative flex w-full items-center gap-3">
+                            {isActive ? (
+                              <motion.span
+                                layoutId="desktop-nav-active-pill"
+                                className="absolute inset-0 -z-10 rounded-lg bg-gradient-to-r from-red-400/22 to-rose-500/22"
+                                transition={{ type: 'spring', stiffness: 280, damping: 28 }}
+                              />
+                            ) : null}
+                            <Icon className="h-4 w-4 transition group-hover:scale-105" />
+                            <span>{item.label}</span>
+                          </motion.div>
+                        )}
+                      </NavLink>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </motion.nav>
         </div>
       </aside>
@@ -118,8 +158,11 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               <div className="flex h-full flex-col px-6 py-5">
                 <div className="mb-8 flex items-center justify-between">
                   <div>
-                    <p className="font-display text-lg font-semibold tracking-wide text-white">Crimson Console</p>
-                    <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Mission Control</p>
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="h-4 w-4 text-cyan-200" />
+                      <p className="font-display text-lg font-semibold tracking-wide text-white">BattleNest Web3OS</p>
+                    </div>
+                    <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Autonomous Mission Core</p>
                   </div>
                   <button
                     className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 md:hidden"
@@ -130,39 +173,46 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                   </button>
                 </div>
 
-                <motion.nav variants={navContainerVariants} initial="hidden" animate="show" className="space-y-2">
-                  {items.map((item) => {
-                    const Icon = item.icon;
-                    return (
-                      <NavLink
-                        key={item.to}
-                        to={item.to}
-                        onClick={onClose}
-                        className={({ isActive }) =>
-                          cn(
-                            'group relative flex items-center gap-3 overflow-hidden rounded-xl border px-4 py-3 text-sm transition',
-                            isActive
-                              ? 'border-glow/60 bg-glow/10 text-white shadow-glow'
-                              : 'border-slate-800/80 bg-panelAlt text-slate-300 hover:border-slate-600 hover:text-white'
-                          )
-                        }
-                      >
-                        {({ isActive }) => (
-                          <motion.div variants={navItemVariants} className="relative flex w-full items-center gap-3">
-                            {isActive ? (
-                              <motion.span
-                                layoutId="mobile-nav-active-pill"
-                                className="absolute inset-0 -z-10 rounded-lg bg-gradient-to-r from-red-400/22 to-rose-500/22"
-                                transition={{ type: 'spring', stiffness: 280, damping: 28 }}
-                              />
-                            ) : null}
-                            <Icon className="h-4 w-4 transition group-hover:scale-105" />
-                            <span>{item.label}</span>
-                          </motion.div>
-                        )}
-                      </NavLink>
-                    );
-                  })}
+                <motion.nav variants={navContainerVariants} initial="hidden" animate="show" className="space-y-4">
+                  {groupedItems.map((group) => (
+                    <div key={`mobile-group-${group.section}`}>
+                      <p className="mb-2 px-2 text-[10px] uppercase tracking-[0.18em] text-slate-500">{group.section}</p>
+                      <div className="space-y-2">
+                        {group.rows.map((item) => {
+                          const Icon = item.icon;
+                          return (
+                            <NavLink
+                              key={item.to}
+                              to={item.to}
+                              onClick={onClose}
+                              className={({ isActive }) =>
+                                cn(
+                                  'group relative flex items-center gap-3 overflow-hidden rounded-xl border px-4 py-3 text-sm transition',
+                                  isActive
+                                    ? 'border-glow/60 bg-glow/10 text-white shadow-glow'
+                                    : 'border-slate-800/80 bg-panelAlt text-slate-300 hover:border-slate-600 hover:text-white'
+                                )
+                              }
+                            >
+                              {({ isActive }) => (
+                                <motion.div variants={navItemVariants} className="relative flex w-full items-center gap-3">
+                                  {isActive ? (
+                                    <motion.span
+                                      layoutId="mobile-nav-active-pill"
+                                      className="absolute inset-0 -z-10 rounded-lg bg-gradient-to-r from-red-400/22 to-rose-500/22"
+                                      transition={{ type: 'spring', stiffness: 280, damping: 28 }}
+                                    />
+                                  ) : null}
+                                  <Icon className="h-4 w-4 transition group-hover:scale-105" />
+                                  <span>{item.label}</span>
+                                </motion.div>
+                              )}
+                            </NavLink>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </motion.nav>
               </div>
             </motion.aside>
