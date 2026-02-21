@@ -1,4 +1,4 @@
-import { apiRequest } from '../../lib/apiClient';
+import { ApiRequestError, apiRequest } from '../../lib/apiClient';
 
 type ApiResponse<T> = {
   data: T;
@@ -49,11 +49,32 @@ export async function fetchUpcomingMarketplaceMints(params?: { limit?: number; d
   if (params?.days) query.set('days', String(params.days));
   const suffix = query.toString() ? `?${query.toString()}` : '';
 
-  const response = await apiRequest<ApiResponse<MarketplaceMintItem[]>>(
-    `/marketplace-mints/upcoming${suffix}`,
-    undefined,
-    { retries: 1 }
-  );
+  try {
+    const response = await apiRequest<ApiResponse<MarketplaceMintItem[]>>(
+      `/marketplace-mints/upcoming${suffix}`,
+      undefined,
+      { retries: 1 }
+    );
+    return response;
+  } catch (error) {
+    const shouldRetryWithoutLimit =
+      params?.limit !== undefined &&
+      error instanceof ApiRequestError &&
+      error.status === 400 &&
+      String(error.message).toLowerCase().includes('limit');
 
-  return response;
+    if (!shouldRetryWithoutLimit) {
+      throw error;
+    }
+
+    const fallbackQuery = new URLSearchParams();
+    if (params?.days) fallbackQuery.set('days', String(params.days));
+    const fallbackSuffix = fallbackQuery.toString() ? `?${fallbackQuery.toString()}` : '';
+    const fallbackResponse = await apiRequest<ApiResponse<MarketplaceMintItem[]>>(
+      `/marketplace-mints/upcoming${fallbackSuffix}`,
+      undefined,
+      { retries: 1 }
+    );
+    return fallbackResponse;
+  }
 }

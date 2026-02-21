@@ -214,8 +214,7 @@ export async function getApiCostSummary(options = {}) {
          COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
          COUNT(*)::int AS events_count
        FROM api_usage_events
-       WHERE created_at >= $1
-         AND provider_key <> 'twitter'`,
+       WHERE created_at >= $1`,
       [sinceIso]
     ),
     pool.query(
@@ -225,8 +224,7 @@ export async function getApiCostSummary(options = {}) {
          COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
          COALESCE(SUM(output_tokens), 0) AS total_output_tokens,
          COUNT(*)::int AS events_count
-       FROM api_usage_events
-       WHERE provider_key <> 'twitter'`
+       FROM api_usage_events`
     ),
     pool.query(
       `SELECT
@@ -239,7 +237,6 @@ export async function getApiCostSummary(options = {}) {
          MAX(created_at) AS last_event_at
        FROM api_usage_events
        WHERE created_at >= $1
-         AND provider_key <> 'twitter'
        GROUP BY provider_key
        ORDER BY total_cost_usd DESC, total_requests DESC
        LIMIT $2`,
@@ -261,7 +258,6 @@ export async function getApiCostSummary(options = {}) {
          metadata,
          created_at
        FROM api_usage_events
-       WHERE provider_key <> 'twitter'
        ORDER BY created_at DESC
        LIMIT $1`,
       [recentLimit]

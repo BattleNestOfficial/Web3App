@@ -1,7 +1,8 @@
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from 'framer-motion';
 import { Menu } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
+import { recordAppActivity, type AppActivitySource } from '../../features/activity/log';
 import { AmbientBackground } from './AmbientBackground';
 import { Sidebar } from './Sidebar';
 import { TopHeader } from './TopHeader';
@@ -10,6 +11,18 @@ export function AppShell() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const location = useLocation();
   const reduceMotion = useReducedMotion();
+
+  useEffect(() => {
+    const source = resolveActivitySourceFromPath(location.pathname);
+    const label = resolveRouteLabel(location.pathname);
+    void recordAppActivity({
+      source,
+      action: 'view_page',
+      title: 'Page viewed',
+      detail: label
+    });
+  }, [location.pathname]);
+
   const mobileMenuButton = (
     <button
       className="rounded-xl border border-slate-700/60 bg-panel/80 p-2 text-slate-300 transition hover:border-cyan-300/40 hover:text-white md:hidden"
@@ -46,4 +59,28 @@ export function AppShell() {
       </div>
     </MotionConfig>
   );
+}
+
+function resolveRouteLabel(pathname: string) {
+  if (pathname.startsWith('/analytics')) return 'Analytics';
+  if (pathname.startsWith('/nft-mints')) return 'NFT Mint Tracker';
+  if (pathname.startsWith('/farming')) return 'Projects / Testnets';
+  if (pathname.startsWith('/todo')) return 'To-Do';
+  if (pathname.startsWith('/wallet-tracker')) return 'Wallet Tracker';
+  if (pathname.startsWith('/bugs')) return 'Bug Tracker';
+  if (pathname.startsWith('/api-costs')) return 'API Cost Tracker';
+  if (pathname.startsWith('/settings')) return 'Settings';
+  return 'Overview';
+}
+
+function resolveActivitySourceFromPath(pathname: string): AppActivitySource {
+  if (pathname.startsWith('/analytics')) return 'analytics';
+  if (pathname.startsWith('/nft-mints')) return 'mint_tracker';
+  if (pathname.startsWith('/farming')) return 'farming';
+  if (pathname.startsWith('/todo')) return 'todo';
+  if (pathname.startsWith('/wallet-tracker')) return 'wallet_tracker';
+  if (pathname.startsWith('/bugs')) return 'bug_tracker';
+  if (pathname.startsWith('/api-costs')) return 'analytics';
+  if (pathname.startsWith('/settings')) return 'productivity';
+  return 'productivity';
 }

@@ -11,6 +11,7 @@ import {
 } from '../features/ai/api';
 import { listRecentAppActivityEvents } from '../features/activity/log';
 import { buildTrackedActivityEntries, type TrackedActivityEntry } from '../features/activity/stream';
+import { farmingDB, type FarmingProjectRecord } from '../features/farming/db';
 import { mintDB } from '../features/mints/db';
 import { todoDB, toggleTodoTask, type TodoTaskRecord } from '../features/todo/db';
 import { fetchWalletActivityEvents, type WalletActivityEvent } from '../features/walletTracker/api';
@@ -129,6 +130,10 @@ export function DashboardPage() {
   const [isJarvisExecutingCommand, setIsJarvisExecutingCommand] = useState(false);
   const jarvisNotifiedIdsRef = useRef(new Set<string>());
   const todoTasks = useLiveQuery(async () => todoDB.tasks.toArray(), []);
+  const farmingRows = useLiveQuery(
+    async () => (await farmingDB.projects.toArray()).filter((project) => project.deletedAt === null),
+    []
+  );
   const mintRows = useLiveQuery(
     async () => (await mintDB.mints.toArray()).filter((mint) => mint.deletedAt === null),
     []
@@ -137,11 +142,25 @@ export function DashboardPage() {
   const appActivityRows = useLiveQuery(async () => listRecentAppActivityEvents(240), []);
   const localMints = useMemo(() => mintRows ?? [], [mintRows]);
   const localReminders = useMemo(() => reminderRows ?? [], [reminderRows]);
+  const localFarmingProjects = useMemo(() => farmingRows ?? [], [farmingRows]);
+  const localTodoTasks = useMemo(() => todoTasks ?? [], [todoTasks]);
   const appActivityEvents = useMemo(() => appActivityRows ?? [], [appActivityRows]);
   const activityTimeline = useMemo(
     () => buildTrackedActivityEntries(walletTimelineEvents, localMints, appActivityEvents, 12),
     [appActivityEvents, localMints, walletTimelineEvents]
   );
+  const localFallbackSummary = useMemo(
+    () =>
+      buildLocalDailySummary({
+        nowMs: nowTick,
+        mints: localMints,
+        reminders: localReminders,
+        farmingProjects: localFarmingProjects,
+        todoTasks: localTodoTasks
+      }),
+    [localFarmingProjects, localMints, localReminders, localTodoTasks, nowTick]
+  );
+  const resolvedDailySummary = dailyAiSummary ?? localFallbackSummary;
 
   useEffect(() => {
     let isMounted = true;
@@ -153,9 +172,9 @@ export function DashboardPage() {
         const response = await fetchDailyProductivitySummaryWithAi();
         if (!isMounted) return;
         setDailyAiSummary(response);
-      } catch (error) {
+      } catch {
         if (!isMounted) return;
-        setDailySummaryError(error instanceof Error ? error.message : 'Failed to load AI daily summary.');
+        setDailySummaryError('Cloud AI summary unavailable. Showing local briefing.');
       } finally {
         if (isMounted) {
           setIsAiLoadingDailySummary(false);
@@ -181,10 +200,10 @@ export function DashboardPage() {
         const walletEvents = await fetchWalletActivityEvents({ limit: 160 });
         if (!isMounted) return;
         setWalletTimelineEvents(walletEvents);
-      } catch (error) {
+      } catch {
         if (!isMounted) return;
         setWalletTimelineEvents([]);
-        setActivityError(error instanceof Error ? error.message : 'Failed to load activity timeline.');
+        setActivityError('Live wallet sync unavailable. Showing local activity only.');
       } finally {
         if (isMounted) {
           setIsActivityLoading(false);
@@ -335,8 +354,8 @@ export function DashboardPage() {
     [actionableCompanionAgenda]
   );
   const jarvisRiskAlerts = useMemo(
-    () => buildJarvisRiskAlerts(actionableCompanionAgenda, nowTick, dailyAiSummary),
-    [actionableCompanionAgenda, dailyAiSummary, nowTick]
+    () => buildJarvisRiskAlerts(actionableCompanionAgenda, nowTick, resolvedDailySummary),
+    [actionableCompanionAgenda, nowTick, resolvedDailySummary]
   );
   const jarvisRunbook = useMemo(
     () => buildJarvisRunbook(actionableCompanionAgenda, nowTick),
@@ -806,27 +825,24 @@ export function DashboardPage() {
             </ol>
           )}
 
-          {isAiLoadingDailySummary ? (
+          {isAiLoadingDailySummary && dailyAiSummary === null ? (
             <p className="mt-3 text-xs text-slate-400">Refreshing AI companion insights...</p>
-          ) : dailySummaryError ? (
-            <p className="mt-3 text-xs text-amber-200">{dailySummaryError}</p>
-          ) : dailyAiSummary ? (
-            <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
-              <p className="text-xs uppercase tracking-[0.12em] text-slate-400">AI Insight</p>
-              <p className="mt-1 text-xs text-slate-200">{dailyAiSummary.summary}</p>
-              {dailyAiSummary.focusItems.length > 0 ? (
-                <p className="mt-2 text-xs text-cyan-200">Focus: {dailyAiSummary.focusItems.slice(0, 2).join(' | ')}</p>
-              ) : null}
-              {dailyAiSummary.riskItems.length > 0 ? (
-                <p className="mt-1 text-xs text-amber-200">Watch: {dailyAiSummary.riskItems.slice(0, 2).join(' | ')}</p>
-              ) : null}
-              <p className="mt-1 text-[11px] text-slate-400">
-                {dailyAiSummary.source.toUpperCase()} | {new Date(dailyAiSummary.generatedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
-              </p>
-            </div>
-          ) : (
-            <p className="mt-3 text-xs text-slate-400">AI insight unavailable.</p>
-          )}
+          ) : null}
+          {dailySummaryError ? <p className="mt-3 text-xs text-amber-200">{dailySummaryError}</p> : null}
+          <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-400">AI Insight</p>
+            <p className="mt-1 text-xs text-slate-200">{resolvedDailySummary.summary}</p>
+            {resolvedDailySummary.focusItems.length > 0 ? (
+              <p className="mt-2 text-xs text-cyan-200">Focus: {resolvedDailySummary.focusItems.slice(0, 2).join(' | ')}</p>
+            ) : null}
+            {resolvedDailySummary.riskItems.length > 0 ? (
+              <p className="mt-1 text-xs text-amber-200">Watch: {resolvedDailySummary.riskItems.slice(0, 2).join(' | ')}</p>
+            ) : null}
+            <p className="mt-1 text-[11px] text-slate-400">
+              {resolvedDailySummary.source.toUpperCase()} |{' '}
+              {new Date(resolvedDailySummary.generatedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST
+            </p>
+          </div>
         </GlassCard>
 
       </motion.div>
@@ -1108,6 +1124,73 @@ function buildJarvisBriefing(operatorName: string, nowMs: number, agendaItems: C
     greeting,
     summary: `Today's mission plan: ${summaryParts.join(' | ')}.`,
     nextAction: `Next action: ${nextItem.title}${nextItem.at ? ` at ${formatIstTime(nextItem.at)}` : ' anytime'}.`
+  };
+}
+
+function buildLocalDailySummary(input: {
+  nowMs: number;
+  mints: Array<{ mintAt: number; deletedAt: number | null }>;
+  reminders: Array<{ remindAt: number; triggeredAt: number | null }>;
+  farmingProjects: FarmingProjectRecord[];
+  todoTasks: TodoTaskRecord[];
+}): DailyProductivitySummaryResult {
+  const windowEnd = input.nowMs + 24 * 60 * 60 * 1000;
+  const activeMints = input.mints.filter((mint) => mint.deletedAt === null);
+  const activeFarmingProjects = input.farmingProjects.filter((project) => project.deletedAt === null);
+
+  const metrics = {
+    mintsUpcoming24h: activeMints.filter((mint) => mint.mintAt >= input.nowMs && mint.mintAt <= windowEnd).length,
+    remindersDue24h: input.reminders.filter(
+      (reminder) => reminder.triggeredAt === null && reminder.remindAt >= input.nowMs && reminder.remindAt <= windowEnd
+    ).length,
+    farmingProjects: activeFarmingProjects.length,
+    farmingAvgProgress:
+      activeFarmingProjects.length === 0
+        ? 0
+        : Math.round(
+            activeFarmingProjects.reduce((total, project) => total + project.progress, 0) / activeFarmingProjects.length
+          ),
+    farmingClaimsDue24h: activeFarmingProjects.filter(
+      (project) => project.claimAt !== null && project.claimAt >= input.nowMs && project.claimAt <= windowEnd
+    ).length
+  };
+
+  const tasksDue24h = input.todoTasks.filter(
+    (task) => !task.done && task.dueAt !== null && task.dueAt >= input.nowMs && task.dueAt <= windowEnd
+  ).length;
+  const overdueTasks = input.todoTasks.filter(
+    (task) => !task.done && task.dueAt !== null && task.dueAt < input.nowMs
+  ).length;
+
+  const focusItems: string[] = [];
+  const riskItems: string[] = [];
+
+  if (metrics.mintsUpcoming24h > 0) {
+    focusItems.push(`Prepare ${metrics.mintsUpcoming24h} upcoming mint event(s) in the next 24h.`);
+  }
+  if (tasksDue24h > 0) {
+    focusItems.push(`Complete ${tasksDue24h} task(s) due in the next 24h.`);
+  }
+  if (metrics.farmingClaimsDue24h > 0) {
+    focusItems.push(`Process ${metrics.farmingClaimsDue24h} farming claim reminder(s) due in 24h.`);
+  }
+  if (overdueTasks > 0) {
+    riskItems.push(`${overdueTasks} task(s) are overdue and need immediate action.`);
+  }
+  if (metrics.remindersDue24h > 8) {
+    riskItems.push('High reminder volume detected; prioritize strict time windows first.');
+  }
+  if (metrics.farmingAvgProgress < 50 && metrics.farmingProjects > 0) {
+    riskItems.push('Average farming progress is below 50%; prioritize high-yield tasks.');
+  }
+
+  return {
+    summary: `Local briefing: ${metrics.mintsUpcoming24h} mint(s), ${tasksDue24h} due task(s), and ${metrics.farmingClaimsDue24h} farming claim(s) in the next 24h.`,
+    focusItems,
+    riskItems,
+    metrics,
+    generatedAt: new Date(input.nowMs).toISOString(),
+    source: 'fallback'
   };
 }
 
