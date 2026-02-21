@@ -120,7 +120,7 @@ async function refundWorkflowIfNeeded({ workflowKey, runKey, billing, notificati
 }
 
 async function buildDailyBriefingSnapshot() {
-  const [upcomingMintsResult, remindersResult, farmingResult, alphaResult] = await Promise.all([
+  const [upcomingMintsResult, remindersResult, farmingResult] = await Promise.all([
     pool.query(
       `SELECT name, chain, mint_date
        FROM mints
@@ -142,11 +142,6 @@ async function buildDailyBriefingSnapshot() {
          COALESCE(ROUND(AVG(progress))::int, 0) AS avg_progress,
          COUNT(*) FILTER (WHERE claim_date IS NOT NULL AND claim_date <= NOW() + INTERVAL '24 hours')::int AS claims_due_24h
        FROM farming_projects`
-    ),
-    pool.query(
-      `SELECT COUNT(*)::int AS count
-       FROM alpha_tweets
-       WHERE tweeted_at >= NOW() - INTERVAL '24 hours'`
     )
   ]);
 
@@ -155,8 +150,7 @@ async function buildDailyBriefingSnapshot() {
     remindersDue24h: remindersResult.rows[0]?.count ?? 0,
     farmingProjects: farmingResult.rows[0]?.total_projects ?? 0,
     farmingAvgProgress: farmingResult.rows[0]?.avg_progress ?? 0,
-    farmingClaimsDue24h: farmingResult.rows[0]?.claims_due_24h ?? 0,
-    alphaTweets24h: alphaResult.rows[0]?.count ?? 0
+    farmingClaimsDue24h: farmingResult.rows[0]?.claims_due_24h ?? 0
   };
 }
 
@@ -228,7 +222,7 @@ async function buildWeeklyReportSnapshot(now) {
   const weekEnd = startOfUtcDay(now);
   const weekStart = new Date(weekEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-  const [mintsCreatedResult, mintsUpcomingResult, remindersSentResult, farmingResult, alphaResult] =
+  const [mintsCreatedResult, mintsUpcomingResult, remindersSentResult, farmingResult] =
     await Promise.all([
       pool.query(
         `SELECT COUNT(*)::int AS count
@@ -256,13 +250,6 @@ async function buildWeeklyReportSnapshot(now) {
            COUNT(*)::int AS total_projects,
            COALESCE(ROUND(AVG(progress))::int, 0) AS avg_progress
          FROM farming_projects`
-      ),
-      pool.query(
-        `SELECT COUNT(*)::int AS count
-         FROM alpha_tweets
-         WHERE tweeted_at >= $1
-           AND tweeted_at < $2`,
-        [weekStart.toISOString(), weekEnd.toISOString()]
       )
     ]);
 
@@ -273,8 +260,7 @@ async function buildWeeklyReportSnapshot(now) {
     mintsScheduled: mintsUpcomingResult.rows[0]?.count ?? 0,
     remindersSent: remindersSentResult.rows[0]?.count ?? 0,
     farmingProjects: farmingResult.rows[0]?.total_projects ?? 0,
-    farmingAvgProgress: farmingResult.rows[0]?.avg_progress ?? 0,
-    alphaTweets: alphaResult.rows[0]?.count ?? 0
+    farmingAvgProgress: farmingResult.rows[0]?.avg_progress ?? 0
   };
 }
 
@@ -313,7 +299,7 @@ export async function runDailyBriefingWorkflow(now = new Date()) {
     shouldRefundInCatch = Boolean(billing?.charged);
 
     const subject = `Daily Briefing (${runKey})`;
-    const body = `Upcoming mints: ${snapshot.upcomingMints.length}. Reminders due next 24h: ${snapshot.remindersDue24h}. Farming avg progress: ${snapshot.farmingAvgProgress}%. Alpha tweets (24h): ${snapshot.alphaTweets24h}.`;
+    const body = `Upcoming mints: ${snapshot.upcomingMints.length}. Reminders due next 24h: ${snapshot.remindersDue24h}. Farming avg progress: ${snapshot.farmingAvgProgress}%.`;
     const htmlContent = `
       <p><strong>Daily Briefing</strong> (${runKey})</p>
       <ul>
@@ -322,7 +308,6 @@ export async function runDailyBriefingWorkflow(now = new Date()) {
         <li>Farming projects: ${snapshot.farmingProjects}</li>
         <li>Average farming progress: ${snapshot.farmingAvgProgress}%</li>
         <li>Farming claims due (24h): ${snapshot.farmingClaimsDue24h}</li>
-        <li>Alpha tweets (24h): ${snapshot.alphaTweets24h}</li>
       </ul>
     `;
 
@@ -603,7 +588,7 @@ export async function runWeeklyProductivityReportWorkflow(now = new Date()) {
     shouldRefundInCatch = Boolean(billing?.charged);
 
     const subject = `Weekly Productivity Report (${runKey})`;
-    const body = `Week summary: ${snapshot.mintsCreated} mints created, ${snapshot.mintsScheduled} mints scheduled, ${snapshot.remindersSent} reminders sent, farming avg progress ${snapshot.farmingAvgProgress}%, alpha tweets ${snapshot.alphaTweets}.`;
+    const body = `Week summary: ${snapshot.mintsCreated} mints created, ${snapshot.mintsScheduled} mints scheduled, ${snapshot.remindersSent} reminders sent, farming avg progress ${snapshot.farmingAvgProgress}%.`;
     const htmlContent = `
       <p><strong>Weekly Productivity Report</strong> (${runKey})</p>
       <ul>
@@ -613,7 +598,6 @@ export async function runWeeklyProductivityReportWorkflow(now = new Date()) {
         <li>Reminders sent: ${snapshot.remindersSent}</li>
         <li>Farming projects: ${snapshot.farmingProjects}</li>
         <li>Farming average progress: ${snapshot.farmingAvgProgress}%</li>
-        <li>Alpha tweets captured: ${snapshot.alphaTweets}</li>
       </ul>
     `;
 

@@ -59,15 +59,6 @@ function parseJsonArray(name, fallback = []) {
   }
 }
 
-function parseCsv(name, fallback = []) {
-  const raw = getOptionalEnv(name, '');
-  if (!raw) return fallback;
-  return raw
-    .split(',')
-    .map((token) => token.trim())
-    .filter(Boolean);
-}
-
 function resolvePostgresConfig() {
   const databaseUrl = process.env.DATABASE_URL;
   if (databaseUrl) {
@@ -108,13 +99,6 @@ export const env = {
       recipientEmail: getOptionalEnv('BREVO_RECIPIENT_EMAIL'),
       recipientName: getOptionalEnv('BREVO_RECIPIENT_NAME', 'Operator')
     }
-  },
-  twitter: {
-    bearerToken: getOptionalEnv('TWITTER_BEARER_TOKEN'),
-    trackedAccounts: parseCsv('TWITTER_TRACKED_ACCOUNTS', []),
-    keywords: parseCsv('TWITTER_KEYWORDS', ['mint', 'testnet', 'airdrop']),
-    fetchLimit: parseOptionalNumber('TWITTER_FETCH_LIMIT', 25),
-    requestTimeoutMs: parseOptionalNumber('TWITTER_REQUEST_TIMEOUT_MS', 15000)
   },
   ai: {
     openAiApiKey: getOptionalEnv('OPENAI_API_KEY'),

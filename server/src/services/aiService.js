@@ -160,7 +160,7 @@ export async function summarizeTweets(inputTweets) {
   try {
     const aiResult = await callOpenAiJson({
       systemPrompt:
-        'You summarize crypto alpha tweets. Return strict JSON: {"summary":"string","highlights":["string"]}. Keep highlights short.',
+        'You summarize web3 ecosystem updates. Return strict JSON: {"summary":"string","highlights":["string"]}. Keep highlights short.',
       userPrompt: `Summarize these tweets and extract 3-6 key highlights:\n\n${tweets
         .map((tweet, index) => `${index + 1}. ${tweet}`)
         .join('\n')}`
@@ -186,7 +186,7 @@ export async function summarizeTweets(inputTweets) {
   });
 
   return {
-    summary: `Tracked ${tweets.length} relevant tweets. Most activity is concentrated around launch and incentive updates.`,
+    summary: `Tracked ${tweets.length} relevant updates. Most activity is concentrated around launch and incentive updates.`,
     highlights
   };
 }
@@ -383,7 +383,7 @@ export async function generateFarmingTasksFromTweets(inputTweets) {
 }
 
 async function loadDailyMetrics() {
-  const [mintsUpcomingResult, remindersResult, farmingResult, alphaTweetsResult] = await Promise.all([
+  const [mintsUpcomingResult, remindersResult, farmingResult] = await Promise.all([
     pool.query(
       `SELECT COUNT(*)::int AS count
        FROM mints
@@ -400,11 +400,6 @@ async function loadDailyMetrics() {
          COALESCE(ROUND(AVG(progress))::int, 0) AS avg_progress,
          COUNT(*) FILTER (WHERE claim_date IS NOT NULL AND claim_date <= NOW() + INTERVAL '24 hours')::int AS claims_due_24h
        FROM farming_projects`
-    ),
-    pool.query(
-      `SELECT COUNT(*)::int AS count
-       FROM alpha_tweets
-       WHERE tweeted_at >= NOW() - INTERVAL '24 hours'`
     )
   ]);
 
@@ -413,8 +408,7 @@ async function loadDailyMetrics() {
     remindersDue24h: remindersResult.rows[0]?.count ?? 0,
     farmingProjects: farmingResult.rows[0]?.total_projects ?? 0,
     farmingAvgProgress: farmingResult.rows[0]?.avg_progress ?? 0,
-    farmingClaimsDue24h: farmingResult.rows[0]?.claims_due_24h ?? 0,
-    alphaTweets24h: alphaTweetsResult.rows[0]?.count ?? 0
+    farmingClaimsDue24h: farmingResult.rows[0]?.claims_due_24h ?? 0
   };
 }
 
@@ -456,10 +450,6 @@ export async function generateDailyProductivitySummary() {
   if (metrics.farmingClaimsDue24h > 0) {
     focusItems.push(`Process ${metrics.farmingClaimsDue24h} farming claim reminder(s) due in 24h.`);
   }
-  if (metrics.alphaTweets24h > 0) {
-    focusItems.push(`Review ${metrics.alphaTweets24h} new alpha tweet(s) from tracked accounts.`);
-  }
-
   if (metrics.remindersDue24h > 8) {
     riskItems.push('High reminder volume can cause missed actions; prioritize critical reminders first.');
   }
@@ -468,7 +458,7 @@ export async function generateDailyProductivitySummary() {
   }
 
   return {
-    summary: `You have ${metrics.mintsUpcoming24h} mint(s), ${metrics.farmingClaimsDue24h} claim(s), and ${metrics.alphaTweets24h} alpha tweet(s) to process over the next 24 hours.`,
+    summary: `You have ${metrics.mintsUpcoming24h} mint(s) and ${metrics.farmingClaimsDue24h} claim(s) to process over the next 24 hours.`,
     focusItems,
     riskItems,
     metrics,

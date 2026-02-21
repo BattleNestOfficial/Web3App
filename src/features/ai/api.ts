@@ -40,7 +40,6 @@ export type DailyProductivitySummaryResult = {
     farmingProjects: number;
     farmingAvgProgress: number;
     farmingClaimsDue24h: number;
-    alphaTweets24h: number;
   };
   generatedAt: string;
   source: 'ai' | 'fallback';

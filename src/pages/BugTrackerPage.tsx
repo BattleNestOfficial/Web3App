@@ -23,15 +23,13 @@ type FormState = {
   priority: BugPriority;
   status: BugStatus;
   noteText: string;
-  screenshots: string[];
 };
 
 const defaultFormState: FormState = {
   title: '',
   priority: 'medium',
   status: 'open',
-  noteText: '',
-  screenshots: []
+  noteText: ''
 };
 
 const STATUS_COLUMNS: Array<{ status: BugStatus; label: string }> = [
@@ -95,12 +93,14 @@ export function BugTrackerPage() {
     setErrorText('');
 
     try {
+      const existingScreenshots =
+        editingId !== null ? allBugs.find((bug) => bug.id === editingId)?.screenshots ?? [] : [];
       const draft: BugDraft = {
         title: form.title.trim(),
         priority: form.priority,
         status: form.status,
         noteText: form.noteText.trim(),
-        screenshots: form.screenshots
+        screenshots: existingScreenshots
       };
 
       if (!draft.title) {
@@ -130,8 +130,7 @@ export function BugTrackerPage() {
       title: bug.title,
       priority: bug.priority,
       status: bug.status,
-      noteText: '',
-      screenshots: bug.screenshots
+      noteText: ''
     });
   }
 
@@ -398,24 +397,10 @@ export function BugTrackerPage() {
 
                         <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
                           <span>{bug.notes.length} note(s)</span>
-                          <span>{bug.screenshots.length} screenshot(s)</span>
                         </div>
 
                         {bug.notes.length > 0 ? (
                           <p className="mb-2 line-clamp-2 text-xs text-slate-300">{bug.notes[bug.notes.length - 1].text}</p>
-                        ) : null}
-
-                        {bug.screenshots.length > 0 ? (
-                          <div className="mb-2 grid grid-cols-3 gap-1">
-                            {bug.screenshots.slice(0, 3).map((image, imageIndex) => (
-                              <img
-                                key={`${bug.id}-image-${imageIndex}`}
-                                src={image}
-                                alt={`Bug screenshot ${imageIndex + 1}`}
-                                className="h-10 w-full rounded border border-white/10 object-cover"
-                              />
-                            ))}
-                          </div>
                         ) : null}
 
                         <div className="flex flex-wrap items-center gap-1.5">

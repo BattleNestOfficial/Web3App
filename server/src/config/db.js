@@ -84,28 +84,6 @@ export async function initDb() {
   await pool.query(`CREATE INDEX IF NOT EXISTS farming_projects_updated_at_idx ON farming_projects(updated_at);`);
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS alpha_tweets (
-      id SERIAL PRIMARY KEY,
-      tweet_id TEXT NOT NULL,
-      author_id TEXT,
-      author_username TEXT NOT NULL,
-      text TEXT NOT NULL,
-      url TEXT NOT NULL,
-      matched_keywords TEXT[] NOT NULL DEFAULT '{}',
-      tweeted_at TIMESTAMPTZ NOT NULL,
-      fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      raw_json JSONB,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (tweet_id)
-    );
-  `);
-
-  await pool.query(`CREATE INDEX IF NOT EXISTS alpha_tweets_tweeted_at_idx ON alpha_tweets(tweeted_at DESC);`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS alpha_tweets_author_idx ON alpha_tweets(author_username);`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS alpha_tweets_keywords_idx ON alpha_tweets USING GIN (matched_keywords);`);
-
-  await pool.query(`
     CREATE TABLE IF NOT EXISTS wallet_trackers (
       id SERIAL PRIMARY KEY,
       wallet_address TEXT NOT NULL,
