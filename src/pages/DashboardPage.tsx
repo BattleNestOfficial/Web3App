@@ -394,7 +394,7 @@ export function DashboardPage() {
         item.at !== null ? `${item.title} at ${formatIstTime(item.at)} | ${item.detail}` : `${item.title} | ${item.detail}`;
 
       try {
-        new Notification(heading, { body, tag: dedupeKey, renotify: false });
+        new Notification(heading, { body, tag: dedupeKey });
         jarvisNotifiedIdsRef.current.add(dedupeKey);
       } catch {
         // Ignore notification failures to keep automation loop resilient.
