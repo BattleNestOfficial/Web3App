@@ -12,6 +12,7 @@ const USAGE_STATUS = {
 
 const WORKFLOW_PRICING_MAP = {
   daily_briefing_email: () => env.automation.pricing.dailyBriefingCents,
+  todo_daily_digest: () => env.automation.pricing.todoDailyDigestCents,
   missed_task_alert: () => env.automation.pricing.missedTaskAlertCents,
   inactive_farming_alert: () => env.automation.pricing.inactiveFarmingAlertCents,
   weekly_productivity_report: () => env.automation.pricing.weeklyReportCents
@@ -51,6 +52,7 @@ export function getWorkflowPriceCents(workflowKey) {
 export function getAutomationPricingConfig() {
   return {
     dailyBriefingCents: normalizeCents(env.automation.pricing.dailyBriefingCents, 0),
+    todoDailyDigestCents: normalizeCents(env.automation.pricing.todoDailyDigestCents, 0),
     missedTaskAlertCents: normalizeCents(env.automation.pricing.missedTaskAlertCents, 0),
     inactiveFarmingAlertCents: normalizeCents(env.automation.pricing.inactiveFarmingAlertCents, 0),
     weeklyReportCents: normalizeCents(env.automation.pricing.weeklyReportCents, 0)

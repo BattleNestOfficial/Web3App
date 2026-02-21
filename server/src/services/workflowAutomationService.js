@@ -8,9 +8,11 @@ import {
 import { triggerAutomationNotification } from './notificationService.js';
 
 const WORKFLOW_DAILY_BRIEFING = 'daily_briefing_email';
+const WORKFLOW_TODO_DAILY_DIGEST = 'todo_daily_digest';
 const WORKFLOW_MISSED_TASK_ALERT = 'missed_task_alert';
 const WORKFLOW_INACTIVE_FARMING_ALERT = 'inactive_farming_alert';
 const WORKFLOW_WEEKLY_PRODUCTIVITY_REPORT = 'weekly_productivity_report';
+const IST_OFFSET_MS = 330 * 60 * 1000;
 
 function clampInt(value, min, max, fallback) {
   const numeric = Number(value);
@@ -19,12 +21,40 @@ function clampInt(value, min, max, fallback) {
   return Math.max(min, Math.min(max, rounded));
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 function formatDateKey(date) {
   return date.toISOString().slice(0, 10);
 }
 
 function formatHourKey(date) {
   return `${formatDateKey(date)}-${String(date.getUTCHours()).padStart(2, '0')}`;
+}
+
+function formatIstDateKey(date) {
+  const shifted = new Date(date.getTime() + IST_OFFSET_MS);
+  const year = shifted.getUTCFullYear();
+  const month = String(shifted.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(shifted.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getIstDayBoundsUtc(date) {
+  const shifted = new Date(date.getTime() + IST_OFFSET_MS);
+  const startUtcMs =
+    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()) - IST_OFFSET_MS;
+  const endUtcMs = startUtcMs + 24 * 60 * 60 * 1000 - 1;
+  return {
+    startIso: new Date(startUtcMs).toISOString(),
+    endIso: new Date(endUtcMs).toISOString()
+  };
 }
 
 function isoWeekKey(date) {
@@ -151,6 +181,58 @@ async function buildDailyBriefingSnapshot() {
     farmingProjects: farmingResult.rows[0]?.total_projects ?? 0,
     farmingAvgProgress: farmingResult.rows[0]?.avg_progress ?? 0,
     farmingClaimsDue24h: farmingResult.rows[0]?.claims_due_24h ?? 0
+  };
+}
+
+async function buildTodoDailyDigestSnapshot(now, slot) {
+  const { startIso, endIso } = getIstDayBoundsUtc(now);
+
+  const [completedResult, summaryResult, pendingResult] = await Promise.all([
+    pool.query(
+      `SELECT id, title, notes, priority, due_at, completed_at
+       FROM todo_tasks
+       WHERE done = true
+         AND completed_at IS NOT NULL
+         AND completed_at >= $1
+         AND completed_at <= $2
+       ORDER BY completed_at DESC
+       LIMIT 200`,
+      [startIso, endIso]
+    ),
+    pool.query(
+      `SELECT
+         COUNT(*)::int AS total_tasks,
+         COUNT(*) FILTER (WHERE done = false)::int AS pending_tasks,
+         COUNT(*) FILTER (WHERE done = false AND due_at IS NOT NULL AND due_at < NOW())::int AS overdue_tasks,
+         COUNT(*) FILTER (
+           WHERE done = false
+             AND due_at IS NOT NULL
+             AND due_at >= NOW()
+             AND due_at <= NOW() + INTERVAL '24 hours'
+         )::int AS due_next_24h
+       FROM todo_tasks`
+    ),
+    pool.query(
+      `SELECT id, title, priority, due_at
+       FROM todo_tasks
+       WHERE done = false
+       ORDER BY due_at ASC NULLS LAST, updated_at DESC
+       LIMIT 12`
+    )
+  ]);
+
+  return {
+    slot,
+    istDate: formatIstDateKey(now),
+    dayStartUtc: startIso,
+    dayEndUtc: endIso,
+    completedTasks: completedResult.rows,
+    completedCount: completedResult.rows.length,
+    totalTasks: summaryResult.rows[0]?.total_tasks ?? 0,
+    pendingTasks: summaryResult.rows[0]?.pending_tasks ?? 0,
+    overdueTasks: summaryResult.rows[0]?.overdue_tasks ?? 0,
+    dueNext24h: summaryResult.rows[0]?.due_next_24h ?? 0,
+    pendingPreview: pendingResult.rows
   };
 }
 
@@ -347,6 +429,168 @@ export async function runDailyBriefingWorkflow(now = new Date()) {
     if (billing?.charged && shouldRefundInCatch) {
       refund = await refundWorkflowCharge({
         workflowKey: WORKFLOW_DAILY_BRIEFING,
+        runKey,
+        reason: 'workflow-exception',
+        details: {
+          error: error instanceof Error ? error.message : String(error)
+        }
+      });
+    }
+
+    await finishAutomationRun(lock.runId, 'failed', {
+      error: error instanceof Error ? error.message : String(error),
+      billing,
+      refund
+    });
+    throw error;
+  }
+}
+
+export async function runTodoDailyDigestWorkflow(now = new Date()) {
+  const morningHour = clampInt(env.automation.todoDigestMorningHourUtc, 0, 23, 3);
+  const nightHour = clampInt(env.automation.todoDigestNightHourUtc, 0, 23, 15);
+  const currentHour = now.getUTCHours();
+
+  let slot = null;
+  if (currentHour === morningHour) slot = 'morning';
+  if (currentHour === nightHour) slot = slot ?? 'night';
+
+  if (!slot) {
+    return { workflow: WORKFLOW_TODO_DAILY_DIGEST, state: 'waiting', reason: 'outside-schedule' };
+  }
+
+  const runKey = `${formatIstDateKey(now)}-${slot}`;
+  const lock = await beginAutomationRun(WORKFLOW_TODO_DAILY_DIGEST, runKey);
+  if (!lock.started) {
+    return { workflow: WORKFLOW_TODO_DAILY_DIGEST, state: 'already_ran', runKey };
+  }
+
+  let billing = null;
+  let shouldRefundInCatch = false;
+  try {
+    const snapshot = await buildTodoDailyDigestSnapshot(now, slot);
+    billing = await applyWorkflowBilling({
+      workflowKey: WORKFLOW_TODO_DAILY_DIGEST,
+      runKey,
+      runId: lock.runId,
+      snapshot
+    });
+
+    if (!billing.allowed) {
+      return {
+        workflow: WORKFLOW_TODO_DAILY_DIGEST,
+        state: 'skipped',
+        reason: 'insufficient-automation-balance',
+        runKey,
+        priceCents: getWorkflowPriceCents(WORKFLOW_TODO_DAILY_DIGEST)
+      };
+    }
+    shouldRefundInCatch = Boolean(billing?.charged);
+
+    const slotLabel = slot === 'morning' ? 'Morning' : 'Night';
+    const completedHeading = snapshot.completedCount === 0 ? 'No tasks completed yet today.' : `${snapshot.completedCount} task(s) completed today.`;
+    const body = `${slotLabel} To-Do report (${snapshot.istDate} IST): ${completedHeading} Pending: ${snapshot.pendingTasks}. Overdue: ${snapshot.overdueTasks}. Due in next 24h: ${snapshot.dueNext24h}.`;
+
+    const completedItemsHtml =
+      snapshot.completedTasks.length === 0
+        ? '<li>No completed tasks recorded for this IST day so far.</li>'
+        : snapshot.completedTasks
+            .map((task) => {
+              const completedAtText = task.completed_at
+                ? new Date(task.completed_at).toLocaleString('en-IN', {
+                    timeZone: 'Asia/Kolkata',
+                    day: '2-digit',
+                    month: 'short',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                  })
+                : 'unknown time';
+              const dueAtText = task.due_at
+                ? new Date(task.due_at).toLocaleString('en-IN', {
+                    timeZone: 'Asia/Kolkata',
+                    day: '2-digit',
+                    month: 'short',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                  })
+                : 'no due date';
+              const notes = String(task.notes ?? '').trim();
+              return `<li><strong>${escapeHtml(task.title)}</strong> | ${escapeHtml(task.priority)} | completed ${escapeHtml(completedAtText)} IST | due ${escapeHtml(dueAtText)} IST${notes ? ` | note: ${escapeHtml(notes)}` : ''}</li>`;
+            })
+            .join('');
+
+    const pendingItemsHtml =
+      snapshot.pendingPreview.length === 0
+        ? '<li>No pending tasks.</li>'
+        : snapshot.pendingPreview
+            .map((task) => {
+              const dueAtText = task.due_at
+                ? new Date(task.due_at).toLocaleString('en-IN', {
+                    timeZone: 'Asia/Kolkata',
+                    day: '2-digit',
+                    month: 'short',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                  })
+                : 'no due date';
+              return `<li>${escapeHtml(task.title)} | ${escapeHtml(task.priority)} | ${escapeHtml(dueAtText)} IST</li>`;
+            })
+            .join('');
+
+    const htmlContent = `
+      <p><strong>${slotLabel} To-Do Digest</strong> (${escapeHtml(snapshot.istDate)} IST)</p>
+      <ul>
+        <li>Total tasks: ${snapshot.totalTasks}</li>
+        <li>Completed today: ${snapshot.completedCount}</li>
+        <li>Pending: ${snapshot.pendingTasks}</li>
+        <li>Overdue: ${snapshot.overdueTasks}</li>
+        <li>Due next 24h: ${snapshot.dueNext24h}</li>
+      </ul>
+      <p><strong>Completed Tasks (IST day)</strong></p>
+      <ul>${completedItemsHtml}</ul>
+      <p><strong>Pending Queue</strong></p>
+      <ul>${pendingItemsHtml}</ul>
+    `;
+
+    const notification = await sendWorkflowNotification({
+      workflowKey: WORKFLOW_TODO_DAILY_DIGEST,
+      runKey,
+      title: `${slotLabel} To-Do Daily Report (${snapshot.istDate} IST)`,
+      body,
+      htmlContent,
+      metadata: snapshot
+    });
+    shouldRefundInCatch = !notification.delivered;
+    const refund = await refundWorkflowIfNeeded({
+      workflowKey: WORKFLOW_TODO_DAILY_DIGEST,
+      runKey,
+      billing,
+      notification
+    });
+    shouldRefundInCatch = false;
+
+    await finishAutomationRun(lock.runId, notification.delivered ? 'sent' : 'failed', {
+      snapshot,
+      notification,
+      billing,
+      refund
+    });
+
+    return {
+      workflow: WORKFLOW_TODO_DAILY_DIGEST,
+      state: notification.delivered ? 'sent' : 'failed',
+      runKey,
+      snapshot,
+      billing
+    };
+  } catch (error) {
+    let refund = null;
+    if (billing?.charged && shouldRefundInCatch) {
+      refund = await refundWorkflowCharge({
+        workflowKey: WORKFLOW_TODO_DAILY_DIGEST,
         runKey,
         reason: 'workflow-exception',
         details: {

@@ -127,12 +127,15 @@ export const env = {
     currency: getOptionalEnv('AUTOMATION_CURRENCY', 'USD'),
     defaultBalanceCents: parseOptionalNumber('AUTOMATION_DEFAULT_BALANCE_CENTS', 0),
     dailyBriefingHourUtc: parseOptionalNumber('AUTOMATION_DAILY_BRIEFING_HOUR_UTC', 8),
+    todoDigestMorningHourUtc: parseOptionalNumber('AUTOMATION_TODO_DIGEST_MORNING_HOUR_UTC', 3),
+    todoDigestNightHourUtc: parseOptionalNumber('AUTOMATION_TODO_DIGEST_NIGHT_HOUR_UTC', 15),
     weeklyReportDayUtc: parseOptionalNumber('AUTOMATION_WEEKLY_REPORT_DAY_UTC', 1),
     weeklyReportHourUtc: parseOptionalNumber('AUTOMATION_WEEKLY_REPORT_HOUR_UTC', 8),
     inactiveFarmingDays: parseOptionalNumber('AUTOMATION_INACTIVE_FARMING_DAYS', 3),
     missedTaskLookbackHours: parseOptionalNumber('AUTOMATION_MISSED_TASK_LOOKBACK_HOURS', 24),
     pricing: {
       dailyBriefingCents: parseOptionalNumber('AUTOMATION_PRICE_DAILY_BRIEFING_CENTS', 100),
+      todoDailyDigestCents: parseOptionalNumber('AUTOMATION_PRICE_TODO_DAILY_DIGEST_CENTS', 40),
       missedTaskAlertCents: parseOptionalNumber('AUTOMATION_PRICE_MISSED_TASK_ALERT_CENTS', 60),
       inactiveFarmingAlertCents: parseOptionalNumber('AUTOMATION_PRICE_INACTIVE_FARMING_ALERT_CENTS', 60),
       weeklyReportCents: parseOptionalNumber('AUTOMATION_PRICE_WEEKLY_REPORT_CENTS', 180)

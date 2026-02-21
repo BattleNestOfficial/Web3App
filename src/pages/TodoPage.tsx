@@ -1,19 +1,32 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { AnimatePresence, motion } from 'framer-motion';
-import { CalendarClock, CheckCircle2, Circle, ListTodo, Pencil, Plus, Trash2 } from 'lucide-react';
-import { type FormEvent, useMemo, useState } from 'react';
+import {
+  CalendarClock,
+  CheckCircle2,
+  Circle,
+  ListTodo,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2
+} from 'lucide-react';
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import {
   createTodoTask,
   deleteTodoTask,
+  TODO_REMINDER_OPTIONS,
   todoDB,
   toggleTodoTask,
   type TodoPriority,
+  type TodoReminderOffsetMinutes,
+  type TodoSyncStatus,
   type TodoTaskDraft,
   type TodoTaskRecord,
   updateTodoTask
 } from '../features/todo/db';
+import { syncTodoTasksWithBackend } from '../features/todo/sync';
 
 type Filter = 'all' | 'active' | 'completed' | 'overdue';
 
@@ -22,13 +35,17 @@ type FormState = {
   notes: string;
   dueDate: string;
   priority: TodoPriority;
+  reminderEmailEnabled: boolean;
+  reminderOffsets: TodoReminderOffsetMinutes[];
 };
 
 const defaultForm: FormState = {
   title: '',
   notes: '',
   dueDate: '',
-  priority: 'medium'
+  priority: 'medium',
+  reminderEmailEnabled: true,
+  reminderOffsets: [60, 30, 10]
 };
 
 export function TodoPage() {
@@ -36,22 +53,54 @@ export function TodoPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [activeFilter, setActiveFilter] = useState<Filter>('all');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('Waiting for first sync...');
   const [errorText, setErrorText] = useState('');
   const now = Date.now();
 
   const tasks = useLiveQuery(
     async () =>
-      (await todoDB.tasks.toArray()).sort((a, b) => {
-        if (a.done !== b.done) return Number(a.done) - Number(b.done);
-        const dueA = a.dueAt ?? Number.MAX_SAFE_INTEGER;
-        const dueB = b.dueAt ?? Number.MAX_SAFE_INTEGER;
-        if (dueA !== dueB) return dueA - dueB;
-        return b.updatedAt - a.updatedAt;
-      }),
+      (await todoDB.tasks.toArray())
+        .filter((task) => task.deletedAt === null)
+        .sort((a, b) => {
+          if (a.done !== b.done) return Number(a.done) - Number(b.done);
+          const dueA = a.dueAt ?? Number.MAX_SAFE_INTEGER;
+          const dueB = b.dueAt ?? Number.MAX_SAFE_INTEGER;
+          if (dueA !== dueB) return dueA - dueB;
+          return b.updatedAt - a.updatedAt;
+        }),
     []
   );
 
+  const runSync = useCallback(async () => {
+    setIsSyncing(true);
+    const result = await syncTodoTasksWithBackend();
+    setSyncMessage(result.message);
+    setIsSyncing(false);
+  }, []);
+
+  useEffect(() => {
+    void runSync();
+    const onOnline = () => {
+      void runSync();
+    };
+
+    const timer = window.setInterval(() => {
+      void runSync();
+    }, 45_000);
+
+    window.addEventListener('online', onOnline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.clearInterval(timer);
+    };
+  }, [runSync]);
+
   const allTasks = tasks ?? [];
+  const pendingSyncCount = useMemo(
+    () => allTasks.filter((task) => task.syncStatus !== 'synced').length,
+    [allTasks]
+  );
   const filteredTasks = useMemo(() => {
     if (activeFilter === 'active') return allTasks.filter((task) => !task.done);
     if (activeFilter === 'completed') return allTasks.filter((task) => task.done);
@@ -68,17 +117,36 @@ export function TodoPage() {
     return { total, done, active, overdue, completionRate };
   }, [allTasks, now]);
 
+  function toggleReminderOffset(minutes: TodoReminderOffsetMinutes) {
+    setForm((prev) => {
+      const exists = prev.reminderOffsets.includes(minutes);
+      if (exists) {
+        return {
+          ...prev,
+          reminderOffsets: prev.reminderOffsets.filter((value) => value !== minutes)
+        };
+      }
+      return {
+        ...prev,
+        reminderOffsets: [...prev.reminderOffsets, minutes].sort((a, b) => b - a)
+      };
+    });
+  }
+
   async function submitTask(event: FormEvent) {
     event.preventDefault();
     setIsSubmitting(true);
     setErrorText('');
 
     try {
+      const dueAt = form.dueDate ? new Date(form.dueDate).getTime() : null;
       const draft: TodoTaskDraft = {
         title: form.title.trim(),
         notes: form.notes.trim(),
-        dueAt: form.dueDate ? new Date(form.dueDate).getTime() : null,
-        priority: form.priority
+        dueAt,
+        priority: form.priority,
+        reminderEmailEnabled: form.reminderEmailEnabled,
+        reminderOffsets: dueAt ? form.reminderOffsets : []
       };
 
       if (!draft.title) {
@@ -91,6 +159,7 @@ export function TodoPage() {
         await updateTodoTask(editingId, draft);
       }
 
+      void runSync();
       setForm(defaultForm);
       setEditingId(null);
     } catch (error) {
@@ -107,7 +176,9 @@ export function TodoPage() {
       title: task.title,
       notes: task.notes,
       dueDate: task.dueAt ? toDateTimeLocal(task.dueAt) : '',
-      priority: task.priority
+      priority: task.priority,
+      reminderEmailEnabled: task.reminderEmailEnabled,
+      reminderOffsets: task.reminderOffsets
     });
   }
 
@@ -115,10 +186,21 @@ export function TodoPage() {
     if (!taskId) return;
     if (!window.confirm('Delete this to-do task?')) return;
     await deleteTodoTask(taskId);
+    void runSync();
 
     if (editingId === taskId) {
       setEditingId(null);
       setForm(defaultForm);
+    }
+  }
+
+  async function toggleTask(taskId: number, done: boolean) {
+    setErrorText('');
+    try {
+      await toggleTodoTask(taskId, done);
+      void runSync();
+    } catch (error) {
+      setErrorText(error instanceof Error ? error.message : 'Unable to update task.');
     }
   }
 
@@ -128,6 +210,22 @@ export function TodoPage() {
         <p className="text-xs uppercase tracking-[0.2em] text-slate-400">To-Do</p>
         <h2 className="text-gradient mt-1 font-display text-2xl sm:text-3xl">Personal Task Console</h2>
       </header>
+
+      <div className="mb-3 rounded-3xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-slate-300">
+            Total tasks: <span className="font-semibold text-white">{allTasks.length}</span>
+          </p>
+          <p className="text-sm text-slate-300">
+            Pending sync: <span className="font-semibold text-white">{pendingSyncCount}</span>
+          </p>
+          <Button type="button" variant="ghost" className="px-3" onClick={() => void runSync()} disabled={isSyncing}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+            {isSyncing ? 'Syncing...' : 'Sync now'}
+          </Button>
+        </div>
+        <p className="mt-2 text-xs text-slate-400">{syncMessage}</p>
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.05fr_1.6fr]">
         <motion.form
@@ -176,6 +274,48 @@ export function TodoPage() {
                 <option value="high">High</option>
               </select>
             </label>
+
+            <div className="space-y-2 rounded-xl border border-slate-700 bg-panelAlt p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs uppercase tracking-[0.12em] text-slate-400">Email Reminders</p>
+                <button
+                  type="button"
+                  onClick={() => setForm((prev) => ({ ...prev, reminderEmailEnabled: !prev.reminderEmailEnabled }))}
+                  className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-wide ${
+                    form.reminderEmailEnabled
+                      ? 'border-emerald-300/40 bg-emerald-300/15 text-emerald-200'
+                      : 'border-slate-600 bg-slate-600/20 text-slate-300'
+                  }`}
+                >
+                  {form.reminderEmailEnabled ? 'Enabled' : 'Disabled'}
+                </button>
+              </div>
+              <p className="text-xs text-slate-400">
+                Choose when reminder email should fire before due time.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {TODO_REMINDER_OPTIONS.map((option) => {
+                  const active = form.reminderOffsets.includes(option.minutes);
+                  const disabled = !form.dueDate;
+                  return (
+                    <button
+                      key={option.minutes}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => toggleReminderOffset(option.minutes)}
+                      className={`rounded-lg border px-3 py-2 text-sm transition ${
+                        active
+                          ? 'border-glow/60 bg-glow/15 text-white'
+                          : 'border-slate-700 bg-panel text-slate-300 hover:text-white'
+                      } disabled:cursor-not-allowed disabled:opacity-40`}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {!form.dueDate ? <p className="text-xs text-amber-200">Set a due date to activate reminder timing.</p> : null}
+            </div>
 
             {errorText ? <p className="text-sm text-danger">{errorText}</p> : null}
 
@@ -271,7 +411,7 @@ export function TodoPage() {
                     <div className="mb-2 flex items-start justify-between gap-2">
                       <button
                         type="button"
-                        onClick={() => task.id && void toggleTodoTask(task.id, !task.done)}
+                        onClick={() => task.id && void toggleTask(task.id, !task.done)}
                         className="mt-0.5 inline-flex h-5 w-5 items-center justify-center text-slate-300"
                         aria-label={task.done ? 'Mark active' : 'Mark done'}
                       >
@@ -288,6 +428,11 @@ export function TodoPage() {
                           <span className="rounded-full border border-slate-600 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
                             {task.done ? 'completed' : 'active'}
                           </span>
+                          {task.syncStatus !== 'synced' ? (
+                            <span className="rounded-full border border-amber-300/40 bg-amber-300/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-200">
+                              {formatSyncStatus(task.syncStatus)}
+                            </span>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -296,6 +441,30 @@ export function TodoPage() {
                       <div className="flex items-center gap-2 text-xs text-slate-300">
                         <CalendarClock className="h-3.5 w-3.5 text-glow" />
                         <span>{formatDue(task.dueAt)}</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        {!task.reminderEmailEnabled ? (
+                          <span className="rounded-full border border-slate-600 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
+                            Email off
+                          </span>
+                        ) : task.dueAt === null ? (
+                          <span className="rounded-full border border-slate-600 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
+                            No due date
+                          </span>
+                        ) : task.reminderOffsets.length === 0 ? (
+                          <span className="rounded-full border border-slate-600 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-300">
+                            No reminder offsets
+                          </span>
+                        ) : (
+                          task.reminderOffsets.map((offset) => (
+                            <span
+                              key={`${task.id}-offset-${offset}`}
+                              className="rounded-full border border-glow/50 bg-glow/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-glow"
+                            >
+                              {formatReminderOffsetLabel(offset)}
+                            </span>
+                          ))
+                        )}
                       </div>
                     </div>
 
@@ -342,6 +511,21 @@ function toDateTimeLocal(timestamp: number) {
 function formatDue(dueAt: number | null) {
   if (!dueAt) return 'No due date';
   return new Date(dueAt).toLocaleString();
+}
+
+function formatReminderOffsetLabel(offset: TodoReminderOffsetMinutes) {
+  if (offset === 1440) return '24h before';
+  if (offset === 120) return '2h before';
+  if (offset === 60) return '1h before';
+  if (offset === 30) return '30m before';
+  return '10m before';
+}
+
+function formatSyncStatus(status: TodoSyncStatus) {
+  if (status === 'pending_create') return 'Pending create';
+  if (status === 'pending_update') return 'Pending update';
+  if (status === 'pending_delete') return 'Pending delete';
+  return 'Sync error';
 }
 
 function priorityBadge(priority: TodoPriority) {

@@ -84,6 +84,107 @@ export async function initDb() {
   await pool.query(`CREATE INDEX IF NOT EXISTS farming_projects_updated_at_idx ON farming_projects(updated_at);`);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS todo_tasks (
+      id SERIAL PRIMARY KEY,
+      client_id TEXT,
+      title TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      due_at TIMESTAMPTZ,
+      priority TEXT NOT NULL CHECK (priority IN ('low', 'medium', 'high')),
+      done BOOLEAN NOT NULL DEFAULT false,
+      completed_at TIMESTAMPTZ,
+      reminder_email_enabled BOOLEAN NOT NULL DEFAULT true,
+      reminder_offsets INTEGER[] NOT NULL DEFAULT '{}'::INTEGER[] CHECK (
+        reminder_offsets <@ ARRAY[1440, 120, 60, 30, 10]::INTEGER[]
+      ),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`ALTER TABLE todo_tasks ADD COLUMN IF NOT EXISTS client_id TEXT;`);
+  await pool.query(`ALTER TABLE todo_tasks ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';`);
+  await pool.query(`ALTER TABLE todo_tasks ADD COLUMN IF NOT EXISTS due_at TIMESTAMPTZ;`);
+  await pool.query(
+    `ALTER TABLE todo_tasks
+     ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'medium'
+     CHECK (priority IN ('low', 'medium', 'high'));`
+  );
+  await pool.query(`ALTER TABLE todo_tasks ADD COLUMN IF NOT EXISTS done BOOLEAN NOT NULL DEFAULT false;`);
+  await pool.query(`ALTER TABLE todo_tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;`);
+  await pool.query(
+    `UPDATE todo_tasks
+     SET completed_at = updated_at
+     WHERE done = true
+       AND completed_at IS NULL;`
+  );
+  await pool.query(
+    `UPDATE todo_tasks
+     SET completed_at = NULL
+     WHERE done = false
+       AND completed_at IS NOT NULL;`
+  );
+  await pool.query(
+    `ALTER TABLE todo_tasks
+     ADD COLUMN IF NOT EXISTS reminder_email_enabled BOOLEAN NOT NULL DEFAULT true;`
+  );
+  await pool.query(
+    `ALTER TABLE todo_tasks
+     ADD COLUMN IF NOT EXISTS reminder_offsets INTEGER[] NOT NULL DEFAULT '{}'::INTEGER[];`
+  );
+  await pool.query(
+    `UPDATE todo_tasks
+     SET reminder_offsets = ARRAY[]::INTEGER[]
+     WHERE reminder_offsets IS NULL;`
+  );
+  await pool.query(
+    `UPDATE todo_tasks
+     SET reminder_offsets = ARRAY(
+       SELECT value
+       FROM unnest(reminder_offsets) AS value
+       WHERE value IN (1440, 120, 60, 30, 10)
+     )
+     WHERE NOT (reminder_offsets <@ ARRAY[1440, 120, 60, 30, 10]::INTEGER[]);`
+  );
+  await pool.query(
+    `UPDATE todo_tasks
+     SET client_id = CONCAT('legacy-todo-', id)
+     WHERE client_id IS NULL OR client_id = '';`
+  );
+  await pool.query(`ALTER TABLE todo_tasks ALTER COLUMN client_id SET NOT NULL;`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS todo_tasks_client_id_idx ON todo_tasks(client_id);`);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS todo_tasks_due_idx
+     ON todo_tasks(done, due_at, updated_at DESC);`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS todo_tasks_completed_at_idx
+     ON todo_tasks(completed_at DESC);`
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS todo_task_reminders (
+      id SERIAL PRIMARY KEY,
+      todo_task_id INTEGER NOT NULL REFERENCES todo_tasks(id) ON DELETE CASCADE,
+      offset_minutes INTEGER NOT NULL CHECK (offset_minutes IN (1440, 120, 60, 30, 10)),
+      remind_at TIMESTAMPTZ NOT NULL,
+      sent_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (todo_task_id, offset_minutes)
+    );
+  `);
+
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS todo_task_reminders_due_idx
+     ON todo_task_reminders(remind_at);`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS todo_task_reminders_sent_idx
+     ON todo_task_reminders(sent_at);`
+  );
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS wallet_trackers (
       id SERIAL PRIMARY KEY,
       wallet_address TEXT NOT NULL,

@@ -14,6 +14,7 @@ import { buildTrackedActivityEntries, type TrackedActivityEntry } from '../featu
 import { farmingDB, type FarmingProjectRecord } from '../features/farming/db';
 import { mintDB } from '../features/mints/db';
 import { todoDB, toggleTodoTask, type TodoTaskRecord } from '../features/todo/db';
+import { syncTodoTasksWithBackend } from '../features/todo/sync';
 import { fetchWalletActivityEvents, type WalletActivityEvent } from '../features/walletTracker/api';
 import { Button } from '../components/ui/Button';
 
@@ -137,7 +138,10 @@ export function DashboardPage() {
   );
   const [jarvisAutoLog, setJarvisAutoLog] = useState('Automation idle.');
   const jarvisNotifiedIdsRef = useRef(new Set<string>());
-  const todoTasks = useLiveQuery(async () => todoDB.tasks.toArray(), []);
+  const todoTasks = useLiveQuery(
+    async () => (await todoDB.tasks.toArray()).filter((task) => task.deletedAt === null),
+    []
+  );
   const farmingRows = useLiveQuery(
     async () => (await farmingDB.projects.toArray()).filter((project) => project.deletedAt === null),
     []
@@ -257,6 +261,15 @@ export function DashboardPage() {
     }, 1000);
 
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    void syncTodoTasksWithBackend();
+    const onOnline = () => {
+      void syncTodoTasksWithBackend();
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
   }, []);
 
   const manualTrackedMints = useMemo(() => localMints.filter((mint) => mint.deletedAt === null), [localMints]);
@@ -485,6 +498,10 @@ export function DashboardPage() {
     setUpdatingTaskId(taskId);
     try {
       await toggleTodoTask(taskId, !done);
+      const syncResult = await syncTodoTasksWithBackend();
+      if (!syncResult.success) {
+        setCompanionError(syncResult.message);
+      }
     } catch (error) {
       setCompanionError(error instanceof Error ? error.message : 'Unable to update task.');
     } finally {

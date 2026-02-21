@@ -70,6 +70,17 @@ export function MintTrackerPage() {
   const [isMarketplaceRefreshing, setIsMarketplaceRefreshing] = useState(false);
   const [marketplaceError, setMarketplaceError] = useState('');
   const now = useNow(1000);
+  const marketplaceProviderIssues = useMemo(() => {
+    if (!marketplaceMeta) return [];
+    const issues: string[] = [];
+    if (!marketplaceMeta.providers.magiceden.ok && marketplaceMeta.providers.magiceden.error) {
+      issues.push(`Magic Eden: ${marketplaceMeta.providers.magiceden.error}`);
+    }
+    if (!marketplaceMeta.providers.opensea.ok && marketplaceMeta.providers.opensea.error) {
+      issues.push(`OpenSea: ${marketplaceMeta.providers.opensea.error}`);
+    }
+    return issues;
+  }, [marketplaceMeta]);
 
   const mints = useLiveQuery(
     async () =>
@@ -532,6 +543,16 @@ export function MintTrackerPage() {
                 {marketplaceError}
               </div>
             ) : null}
+            {marketplaceProviderIssues.length > 0 ? (
+              <div className="mb-3 rounded-xl border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+                <p className="mb-1 font-semibold uppercase tracking-wide">Provider status</p>
+                <ul className="space-y-1">
+                  {marketplaceProviderIssues.map((issue) => (
+                    <li key={issue}>{issue}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
 
             {isMarketplaceLoading ? (
               <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-5 text-sm text-slate-300">
@@ -539,7 +560,10 @@ export function MintTrackerPage() {
               </div>
             ) : marketplaceMints.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-700/80 bg-panel/60 px-3 py-5 text-sm text-slate-300">
-                No upcoming marketplace mints found.
+                No upcoming marketplace mints found for the selected window.
+                {marketplaceProviderIssues.length > 0
+                  ? ' Provider errors are shown above. Verify OPENSEA_API_KEY / MAGICEDEN_API_KEY in backend env.'
+                  : ''}
               </div>
             ) : (
               <div className="max-h-[560px] space-y-2 overflow-y-auto pr-1">

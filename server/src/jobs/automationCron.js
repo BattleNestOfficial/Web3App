@@ -3,6 +3,7 @@ import {
   runDailyBriefingWorkflow,
   runInactiveFarmingAlertWorkflow,
   runMissedTaskAlertWorkflow,
+  runTodoDailyDigestWorkflow,
   runWeeklyProductivityReportWorkflow
 } from '../services/workflowAutomationService.js';
 
@@ -30,6 +31,7 @@ async function runWorkflows() {
     warnedNoChannels = false;
 
     await runDailyBriefingWorkflow();
+    await runTodoDailyDigestWorkflow();
     await runMissedTaskAlertWorkflow();
     await runInactiveFarmingAlertWorkflow();
     await runWeeklyProductivityReportWorkflow();

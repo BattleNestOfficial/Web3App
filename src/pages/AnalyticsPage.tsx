@@ -95,7 +95,10 @@ export function AnalyticsPage() {
     async () => (await mintDB.mints.toArray()).filter((mint) => mint.deletedAt === null),
     []
   );
-  const taskRows = useLiveQuery(async () => todoDB.tasks.toArray(), []);
+  const taskRows = useLiveQuery(
+    async () => (await todoDB.tasks.toArray()).filter((task) => task.deletedAt === null),
+    []
+  );
   const farmingRows = useLiveQuery(
     async () => (await farmingDB.projects.toArray()).filter((project) => project.deletedAt === null),
     []

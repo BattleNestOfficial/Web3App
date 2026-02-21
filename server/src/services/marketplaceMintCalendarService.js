@@ -12,7 +12,35 @@ function clampNumber(value, min, max, fallback) {
 
 function normalizeDateToIso(value) {
   if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return value.toISOString();
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const ms = value < 1_000_000_000_000 ? value * 1000 : value;
+    const date = new Date(ms);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toISOString();
+  }
+
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return null;
+    if (/^\d+(\.\d+)?$/.test(text)) {
+      const numeric = Number(text);
+      if (!Number.isFinite(numeric)) return null;
+      const ms = numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+      const date = new Date(ms);
+      if (Number.isNaN(date.getTime())) return null;
+      return date.toISOString();
+    }
+    const date = new Date(text);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toISOString();
+  }
+
+  const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString();
 }
@@ -89,29 +117,46 @@ function buildMarketplaceUrl(source, slug) {
 }
 
 function mapMagicEdenMint(item) {
-  const startsAt = normalizeDateToIso(item?.launchDatetime);
+  const startsAt =
+    normalizeDateToIso(item?.launchDatetime) ??
+    normalizeDateToIso(item?.launch_datetime) ??
+    normalizeDateToIso(item?.launchDateTime) ??
+    normalizeDateToIso(item?.launchDate) ??
+    normalizeDateToIso(item?.mintStartTime) ??
+    normalizeDateToIso(item?.mint_start_time) ??
+    normalizeDateToIso(item?.goLiveDate) ??
+    normalizeDateToIso(item?.go_live_date);
   if (!startsAt) return null;
 
-  const slug = compactString(item?.symbol);
+  const slug =
+    compactString(item?.symbol) ??
+    compactString(item?.slug) ??
+    compactString(item?.collectionSymbol) ??
+    compactString(item?.collection?.symbol);
   const contractAddress = compactString(item?.contractAddress);
-  const chain = normalizeChain(item?.chainId, 'solana');
+  const chain = normalizeChain(item?.chainId ?? item?.chain ?? item?.network, 'solana');
   const id = `magiceden:${chain}:${contractAddress ?? slug ?? startsAt}`;
+  const stageLabel =
+    compactString(item?.stageLabel) ??
+    compactString(item?.status) ??
+    compactString(item?.launchPhase) ??
+    'Launch';
 
   return {
     id,
     source: 'magiceden',
     sourceLabel: 'Magic Eden',
-    name: compactString(item?.name) ?? 'Untitled Mint',
+    name: compactString(item?.name) ?? compactString(item?.title) ?? 'Untitled Mint',
     chain,
     startsAt,
     endsAt: null,
     url: buildMarketplaceUrl('magiceden', slug),
-    imageUrl: compactString(item?.image),
-    price: Number.isFinite(Number(item?.price)) ? Number(item.price) : null,
-    currency: chain === 'solana' ? 'SOL' : null,
-    supply: Number.isFinite(Number(item?.size)) ? Number(item.size) : null,
+    imageUrl: compactString(item?.image) ?? compactString(item?.imageUrl),
+    price: Number.isFinite(Number(item?.price ?? item?.mintPrice)) ? Number(item?.price ?? item?.mintPrice) : null,
+    currency: compactString(item?.currency) ?? (chain === 'solana' ? 'SOL' : null),
+    supply: Number.isFinite(Number(item?.size ?? item?.supply)) ? Number(item?.size ?? item?.supply) : null,
     contractAddress,
-    stageLabel: 'Launch'
+    stageLabel
   };
 }
 
@@ -176,51 +221,89 @@ function mapOpenSeaDrop(drop, nowMs) {
 async function fetchMagicEdenUpcomingMints({ limit, fromMs, toMs }) {
   const apiBase = env.walletTracker.magiceden.apiBaseUrl.replace(/\/+$/, '');
   const apiKey = env.walletTracker.magiceden.apiKey;
-  const endpoint = `${apiBase}/v2/launchpad/collections`;
-  const query = new URLSearchParams({
-    offset: '0',
-    limit: String(Math.max(20, Math.min(200, limit * 4)))
-  });
+  const endpoints = [
+    `${apiBase}/v2/launchpad/collections?offset=0&limit=${Math.max(20, Math.min(200, limit * 4))}`,
+    `${apiBase}/v2/launchpad/collections?limit=${Math.max(20, Math.min(200, limit * 4))}`
+  ];
 
-  const startedAt = Date.now();
-  const response = await fetch(`${endpoint}?${query.toString()}`, {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+  let lastError = null;
+  for (const endpoint of endpoints) {
+    const startedAt = Date.now();
+    let response;
+    try {
+      response = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+        }
+      });
+    } catch (error) {
+      void recordApiUsageSafely({
+        providerKey: 'magiceden',
+        operation: 'marketplace_upcoming_mints',
+        endpoint,
+        requestCount: 1,
+        success: false,
+        metadata: {
+          service: 'marketplace_mint_calendar',
+          durationMs: Date.now() - startedAt,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      });
+      lastError = error instanceof Error ? error.message : String(error);
+      continue;
     }
-  });
 
-  void recordApiUsageSafely({
-    providerKey: 'magiceden',
-    operation: 'marketplace_upcoming_mints',
-    endpoint,
-    requestCount: 1,
-    statusCode: response.status,
-    success: response.ok,
-    metadata: {
-      service: 'marketplace_mint_calendar',
-      durationMs: Date.now() - startedAt
+    void recordApiUsageSafely({
+      providerKey: 'magiceden',
+      operation: 'marketplace_upcoming_mints',
+      endpoint,
+      requestCount: 1,
+      statusCode: response.status,
+      success: response.ok,
+      metadata: {
+        service: 'marketplace_mint_calendar',
+        durationMs: Date.now() - startedAt
+      }
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      lastError = `Magic Eden request failed (${response.status}): ${body || 'unknown error'}`;
+      continue;
     }
-  });
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Magic Eden request failed (${response.status}): ${body || 'unknown error'}`);
+    const payload = await response.json();
+    const rows = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.collections)
+        ? payload.collections
+        : Array.isArray(payload?.data)
+          ? payload.data
+          : Array.isArray(payload?.launches)
+            ? payload.launches
+            : [];
+
+    const mapped = rows
+      .map(mapMagicEdenMint)
+      .filter(Boolean)
+      .filter((item) => {
+        const startMs = new Date(item.startsAt).getTime();
+        return Number.isFinite(startMs) && startMs >= fromMs && startMs <= toMs;
+      })
+      .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
+      .slice(0, limit);
+
+    if (mapped.length > 0) {
+      return mapped;
+    }
   }
 
-  const payload = await response.json();
-  const rows = Array.isArray(payload) ? payload : [];
-
-  return rows
-    .map(mapMagicEdenMint)
-    .filter(Boolean)
-    .filter((item) => {
-      const startMs = new Date(item.startsAt).getTime();
-      return Number.isFinite(startMs) && startMs >= fromMs && startMs <= toMs;
-    })
-    .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
-    .slice(0, limit);
+  if (lastError) {
+    throw new Error(lastError);
+  }
+  return [];
 }
 
 async function fetchOpenSeaUpcomingMints({ limit, fromMs, toMs }) {
@@ -257,6 +340,11 @@ async function fetchOpenSeaUpcomingMints({ limit, fromMs, toMs }) {
   }
 
   const html = await response.text();
+  const parsedFromEmbeddedJson = extractOpenSeaFromEmbeddedJson(html, fromMs, toMs, limit);
+  if (parsedFromEmbeddedJson.length > 0) {
+    return parsedFromEmbeddedJson;
+  }
+
   const marker = '{"__typename":"Erc721SeaDropV1","identifier":';
   const parsedDrops = [];
   let fromIndex = 0;
@@ -289,10 +377,61 @@ async function fetchOpenSeaUpcomingMints({ limit, fromMs, toMs }) {
   ).slice(0, limit);
 }
 
+function extractOpenSeaFromEmbeddedJson(html, fromMs, toMs, limit) {
+  const markerCandidates = [
+    '"mintStartTime"',
+    '"startTime"',
+    '"start_date"',
+    '"launchDatetime"',
+    '"activeDropStage"',
+    '"dropStages"',
+    '"maxSupply"'
+  ];
+  const parsedObjects = [];
+
+  for (const marker of markerCandidates) {
+    let fromIndex = 0;
+    while (true) {
+      const markerIndex = html.indexOf(marker, fromIndex);
+      if (markerIndex === -1) break;
+
+      const objectStart = html.lastIndexOf('{', markerIndex);
+      if (objectStart === -1) {
+        fromIndex = markerIndex + marker.length;
+        continue;
+      }
+
+      const rawObject = parseJsonObjectAt(html, objectStart);
+      fromIndex = markerIndex + marker.length;
+      if (!rawObject) continue;
+
+      try {
+        const parsed = JSON.parse(rawObject);
+        parsedObjects.push(parsed);
+      } catch {
+        // Ignore malformed JSON chunks.
+      }
+    }
+  }
+
+  return dedupeById(
+    parsedObjects
+      .map(mapOpenSeaApiDrop)
+      .filter(Boolean)
+      .filter((item) => {
+        const startMs = new Date(item.startsAt).getTime();
+        return Number.isFinite(startMs) && startMs >= fromMs && startMs <= toMs;
+      })
+      .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
+  ).slice(0, limit);
+}
+
 function mapOpenSeaApiDrop(item) {
   const startsAt =
     normalizeDateToIso(item?.startTime) ??
     normalizeDateToIso(item?.start_date) ??
+    normalizeDateToIso(item?.drop?.startTime) ??
+    normalizeDateToIso(item?.drop?.start_date) ??
     normalizeDateToIso(item?.mintStartTime) ??
     normalizeDateToIso(item?.launchDatetime);
   if (!startsAt) return null;
@@ -309,7 +448,7 @@ function mapOpenSeaApiDrop(item) {
     name: compactString(item?.name ?? item?.title ?? item?.collection?.name) ?? 'Untitled Drop',
     chain,
     startsAt,
-    endsAt: normalizeDateToIso(item?.endTime ?? item?.end_date),
+    endsAt: normalizeDateToIso(item?.endTime ?? item?.end_date ?? item?.drop?.endTime ?? item?.drop?.end_date),
     url: buildMarketplaceUrl('opensea', slug),
     imageUrl: compactString(item?.imageUrl ?? item?.image_url ?? item?.collection?.image_url),
     price: Number.isFinite(Number(item?.price)) ? Number(item.price) : null,
@@ -324,7 +463,9 @@ async function fetchOpenSeaUpcomingMintsFromApi({ limit, fromMs, toMs }) {
   const apiKey = env.walletTracker.opensea.apiKey;
   const endpoints = [
     `${OPEN_SEA_API_BASE_URL}/drops/upcoming?limit=${Math.max(20, Math.min(100, limit * 3))}`,
-    `${OPEN_SEA_API_BASE_URL}/drops?limit=${Math.max(20, Math.min(100, limit * 3))}`
+    `${OPEN_SEA_API_BASE_URL}/drops?limit=${Math.max(20, Math.min(100, limit * 3))}`,
+    `${OPEN_SEA_API_BASE_URL}/drops?status=upcoming&limit=${Math.max(20, Math.min(100, limit * 3))}`,
+    `${OPEN_SEA_API_BASE_URL}/drops?upcoming=true&limit=${Math.max(20, Math.min(100, limit * 3))}`
   ];
 
   for (const endpoint of endpoints) {
