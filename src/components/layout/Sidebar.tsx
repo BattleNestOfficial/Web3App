@@ -12,6 +12,7 @@ const items = [
   { label: 'To-Do', to: '/todo', icon: ListTodo },
   { label: 'Wallet Tracker', to: '/wallet-tracker', icon: Wallet },
   { label: 'Bug Tracker', to: '/bugs', icon: Bug },
+  { label: 'API Cost Tracker', to: '/api-costs', icon: BarChart3 },
   { label: 'Settings', to: '/settings', icon: Settings }
 ];
 

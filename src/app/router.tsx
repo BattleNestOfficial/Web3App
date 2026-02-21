@@ -1,5 +1,6 @@
 import { Navigate, createBrowserRouter } from 'react-router-dom';
 import { AppShell } from '../components/layout/AppShell';
+import { ApiCostTrackerPage } from '../pages/ApiCostTrackerPage';
 import { AnalyticsPage } from '../pages/AnalyticsPage';
 import { AuthPage } from '../pages/AuthPage';
 import { BugTrackerPage } from '../pages/BugTrackerPage';
@@ -67,6 +68,10 @@ export const router = createBrowserRouter([
           {
             path: '/bugs',
             element: <BugTrackerPage />
+          },
+          {
+            path: '/api-costs',
+            element: <ApiCostTrackerPage />
           },
           {
             path: '/projects',
