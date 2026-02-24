@@ -31,7 +31,7 @@ export type TwitterMessage = {
   display_label: string | null;
 };
 
-export type TwitterTrackerPayload = {
+export type CreateTwitterTrackerPayload = {
   handle: string;
   displayLabel?: string;
   enabled?: boolean;
@@ -42,7 +42,7 @@ export async function fetchTwitterTrackers() {
   return response.data;
 }
 
-export async function createTwitterTracker(payload: TwitterTrackerPayload) {
+export async function createTwitterTracker(payload: CreateTwitterTrackerPayload) {
   const response = await apiRequest<ApiResponse<TwitterTracker>>(
     '/twitter-trackers',
     {
@@ -60,7 +60,13 @@ export async function createTwitterTracker(payload: TwitterTrackerPayload) {
   return response.data;
 }
 
-export async function updateTwitterTracker(id: number, payload: TwitterTrackerPayload) {
+export type UpdateTwitterTrackerPayload = {
+  handle?: string;
+  displayLabel?: string;
+  enabled?: boolean;
+};
+
+export async function updateTwitterTracker(id: number, payload: UpdateTwitterTrackerPayload) {
   const response = await apiRequest<ApiResponse<TwitterTracker>>(
     `/twitter-trackers/${id}`,
     {
@@ -117,4 +123,3 @@ export async function syncTwitterTrackers(trackerId?: number) {
   });
   return response.data;
 }
-
