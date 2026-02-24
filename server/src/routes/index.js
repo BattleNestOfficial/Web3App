@@ -3,7 +3,6 @@ import { analyticsRouter } from './analyticsRoutes.js';
 import { aiRouter } from './aiRoutes.js';
 import { automationRouter } from './automationRoutes.js';
 import { farmingRouter } from './farmingRoutes.js';
-import { marketplaceMintCalendarRouter } from './marketplaceMintCalendarRoutes.js';
 import { mintRouter } from './mintRoutes.js';
 import { todoRouter } from './todoRoutes.js';
 import { twitterTrackerRouter } from './twitterTrackerRoutes.js';
@@ -19,6 +18,5 @@ router.use('/ai', aiRouter);
 router.use('/automation', automationRouter);
 router.use('/wallet-trackers', walletTrackerRouter);
 router.use('/twitter-trackers', twitterTrackerRouter);
-router.use('/marketplace-mints', marketplaceMintCalendarRouter);
 
 export const apiRouter = router;

@@ -14,6 +14,7 @@ type BackendFarmingProject = {
   client_id: string;
   name: string;
   network: string;
+  twitter_handle: string | null;
   tasks: BackendTask[];
   claim_date: string | null;
   reward_notes: string | null;
@@ -31,6 +32,7 @@ export type RemoteFarmingProject = {
   clientId: string;
   name: string;
   network: string;
+  twitterHandle: string;
   tasks: FarmingTask[];
   claimAt: number | null;
   rewardNotes: string;
@@ -43,6 +45,7 @@ type FarmingProjectUpsertPayload = {
   clientId: string;
   name: string;
   network: string;
+  twitterHandle: string;
   tasks: FarmingTask[];
   claimDate: string | null;
   rewardNotes: string;
@@ -65,6 +68,7 @@ function normalizeRemoteProject(input: BackendFarmingProject): RemoteFarmingProj
     clientId: input.client_id,
     name: input.name,
     network: input.network,
+    twitterHandle: (input.twitter_handle ?? '').trim(),
     tasks: normalizeTasks(input.tasks),
     claimAt: input.claim_date ? new Date(input.claim_date).getTime() : null,
     rewardNotes: input.reward_notes ?? '',
@@ -113,6 +117,9 @@ export function toProjectPayload(project: FarmingProjectRecord): FarmingProjectU
     clientId: project.clientId,
     name: project.name,
     network: project.network,
+    twitterHandle: String(project.twitterHandle ?? '')
+      .trim()
+      .replace(/^@+/, ''),
     tasks,
     claimDate: project.claimAt ? new Date(project.claimAt).toISOString() : null,
     rewardNotes: project.rewardNotes,

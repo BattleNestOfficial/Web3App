@@ -5,11 +5,6 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import {
-  fetchUpcomingMarketplaceMints,
-  type MarketplaceMintCalendarMeta,
-  type MarketplaceMintItem
-} from '../features/marketplaceMints/api';
-import {
   type MintDraft,
   type MintRecord,
   type ReminderOffsetMinutes,
@@ -64,46 +59,7 @@ export function MintTrackerPage() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('Waiting for first sync...');
   const [errorText, setErrorText] = useState('');
-  const [marketplaceMints, setMarketplaceMints] = useState<MarketplaceMintItem[]>([]);
-  const [marketplaceMeta, setMarketplaceMeta] = useState<MarketplaceMintCalendarMeta | null>(null);
-  const [isMarketplaceLoading, setIsMarketplaceLoading] = useState(true);
-  const [isMarketplaceRefreshing, setIsMarketplaceRefreshing] = useState(false);
-  const [marketplaceError, setMarketplaceError] = useState('');
   const now = useNow(1000);
-  const marketplaceProviderIssues = useMemo(() => {
-    if (!marketplaceMeta) return [];
-    const shorten = (value: string) => {
-      const text = String(value ?? '').trim();
-      return text.length > 220 ? `${text.slice(0, 220)}...` : text;
-    };
-    const issues: string[] = [];
-    if (!marketplaceMeta.providers.magiceden.ok && marketplaceMeta.providers.magiceden.error) {
-      issues.push(`Magic Eden: ${shorten(marketplaceMeta.providers.magiceden.error)}`);
-    }
-    if (!marketplaceMeta.providers.opensea.ok && marketplaceMeta.providers.opensea.error) {
-      issues.push(`OpenSea: ${shorten(marketplaceMeta.providers.opensea.error)}`);
-    }
-    return issues;
-  }, [marketplaceMeta]);
-  const marketplaceProviderTips = useMemo(() => {
-    const tips: string[] = [];
-    const openSeaError = marketplaceMeta?.providers.opensea.error ?? '';
-    const magicEdenError = marketplaceMeta?.providers.magiceden.error ?? '';
-
-    if (/cloudflare|anti-bot|just a moment|403/i.test(openSeaError)) {
-      tips.push('OpenSea is blocking server-side page scraping. Set OPENSEA_API_KEY in backend env to enable API access.');
-    } else if (/missing opensea_api_key|access denied|401|403/i.test(openSeaError)) {
-      tips.push('OpenSea API key is missing/invalid. Configure OPENSEA_API_KEY in backend env.');
-    }
-
-    if (/limit must be between 1 and 100/i.test(magicEdenError)) {
-      tips.push('Magic Eden request window was rejected previously. Refresh after backend redeploy with updated limit handling.');
-    } else if (/unauthorized|401|403/i.test(magicEdenError)) {
-      tips.push('Magic Eden endpoint requires authentication for this region. Configure MAGICEDEN_API_KEY in backend env.');
-    }
-
-    return Array.from(new Set(tips));
-  }, [marketplaceMeta]);
 
   const mints = useLiveQuery(
     async () =>
@@ -184,58 +140,6 @@ export function MintTrackerPage() {
     window.addEventListener('online', onOnline);
     return () => window.removeEventListener('online', onOnline);
   }, [runSync]);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadMarketplaceCalendar(showLoader: boolean) {
-      if (showLoader) {
-        setIsMarketplaceLoading(true);
-      }
-      setMarketplaceError('');
-
-      try {
-        const response = await fetchUpcomingMarketplaceMints({ days: 90, limit: 100, provider: 'magiceden' });
-        if (!isMounted) return;
-        setMarketplaceMints(response.data);
-        setMarketplaceMeta(response.meta);
-      } catch (error) {
-        if (!isMounted) return;
-        setMarketplaceMints([]);
-        setMarketplaceMeta(null);
-        setMarketplaceError(error instanceof Error ? error.message : 'Failed to load marketplace mint calendar.');
-      } finally {
-        if (isMounted) {
-          setIsMarketplaceLoading(false);
-          setIsMarketplaceRefreshing(false);
-        }
-      }
-    }
-
-    void loadMarketplaceCalendar(true);
-    const timer = window.setInterval(() => {
-      void loadMarketplaceCalendar(false);
-    }, 90_000);
-
-    return () => {
-      isMounted = false;
-      window.clearInterval(timer);
-    };
-  }, []);
-
-  async function refreshMarketplaceCalendar() {
-    setIsMarketplaceRefreshing(true);
-    setMarketplaceError('');
-    try {
-      const response = await fetchUpcomingMarketplaceMints({ days: 90, limit: 100, provider: 'magiceden' });
-      setMarketplaceMints(response.data);
-      setMarketplaceMeta(response.meta);
-    } catch (error) {
-      setMarketplaceError(error instanceof Error ? error.message : 'Failed to refresh marketplace mint calendar.');
-    } finally {
-      setIsMarketplaceRefreshing(false);
-    }
-  }
 
   function toggleReminderOffset(minutes: ReminderOffsetMinutes) {
     setForm((prev) => {
@@ -527,138 +431,6 @@ export function MintTrackerPage() {
             )}
           </div>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs uppercase tracking-[0.14em] text-slate-400">NFT Calendar (Magic Eden Upcoming)</p>
-              <Button
-                type="button"
-                variant="ghost"
-                className="px-3"
-                onClick={() => void refreshMarketplaceCalendar()}
-                disabled={isMarketplaceRefreshing}
-              >
-                <RefreshCw className={`mr-2 h-4 w-4 ${isMarketplaceRefreshing ? 'animate-spin' : ''}`} />
-                {isMarketplaceRefreshing ? 'Refreshing...' : 'Refresh'}
-              </Button>
-            </div>
-
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <span className="rounded-full border border-cyan-300/35 bg-cyan-300/10 px-2 py-0.5 text-xs text-cyan-200">
-                Magic Eden: {marketplaceMeta?.providers.magiceden.count ?? 0}
-              </span>
-            </div>
-
-            {marketplaceMeta ? (
-              <p className="mb-3 text-xs text-slate-400">
-                Upcoming window: next {marketplaceMeta.days} days | Last fetched{' '}
-                {new Date(marketplaceMeta.fetchedAt).toLocaleString('en-IN', {
-                  timeZone: 'Asia/Kolkata'
-                })}{' '}
-                IST
-              </p>
-            ) : null}
-
-            {marketplaceError ? (
-              <div className="mb-3 rounded-xl border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm text-rose-200">
-                {marketplaceError}
-              </div>
-            ) : null}
-            {marketplaceProviderIssues.length > 0 ? (
-              <div className="mb-3 rounded-xl border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
-                <p className="mb-1 font-semibold uppercase tracking-wide">Provider status</p>
-                <ul className="space-y-1">
-                  {marketplaceProviderIssues.map((issue) => (
-                    <li key={issue}>{issue}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {marketplaceProviderTips.length > 0 ? (
-              <div className="mb-3 rounded-xl border border-cyan-300/35 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
-                <p className="mb-1 font-semibold uppercase tracking-wide">Fix Tips</p>
-                <ul className="space-y-1">
-                  {marketplaceProviderTips.map((tip) => (
-                    <li key={tip}>{tip}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            {isMarketplaceLoading ? (
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-5 text-sm text-slate-300">
-                Loading upcoming mints from OpenSea and Magic Eden...
-              </div>
-            ) : marketplaceMints.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-700/80 bg-panel/60 px-3 py-5 text-sm text-slate-300">
-                No upcoming marketplace mints found for the selected window.
-                {marketplaceProviderIssues.length > 0
-                  ? ' Provider errors are shown above. Verify MAGICEDEN_API_KEY and refresh.'
-                  : ''}
-              </div>
-            ) : (
-              <div className="max-h-[560px] space-y-2 overflow-y-auto pr-1">
-                {marketplaceMints.map((mint, index) => (
-                  <motion.article
-                    key={mint.id}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.18, delay: index * 0.01 }}
-                    className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3"
-                  >
-                    <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span
-                          className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
-                            mint.source === 'magiceden'
-                              ? 'border-cyan-300/35 bg-cyan-300/10 text-cyan-200'
-                              : 'border-emerald-300/35 bg-emerald-300/10 text-emerald-200'
-                          }`}
-                        >
-                          {mint.sourceLabel}
-                        </span>
-                        <p className="truncate text-sm text-white">{mint.name}</p>
-                      </div>
-                      <p className="text-xs text-slate-400">{formatMarketplaceDate(mint.startsAt)}</p>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                      <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5 uppercase tracking-wide">
-                        {mint.chain}
-                      </span>
-                      {mint.stageLabel ? (
-                        <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5 uppercase tracking-wide">
-                          {mint.stageLabel}
-                        </span>
-                      ) : null}
-                      {mint.price !== null ? (
-                        <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5">
-                          {mint.price} {mint.currency ?? ''}
-                        </span>
-                      ) : null}
-                      {mint.supply !== null ? (
-                        <span className="rounded-full border border-white/10 bg-white/[0.02] px-2 py-0.5">
-                          Supply {mint.supply}
-                        </span>
-                      ) : null}
-                      <span className="text-glow">{formatTimeUntil(mint.startsAt, now)}</span>
-                      {mint.url ? (
-                        <a
-                          href={mint.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="ml-auto inline-flex items-center rounded-lg border border-slate-600 bg-panelAlt px-2.5 py-1 text-xs text-slate-100 transition hover:border-slate-500"
-                        >
-                          Open
-                          <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                        </a>
-                      ) : null}
-                    </div>
-                  </motion.article>
-                ))}
-              </div>
-            )}
-          </div>
-
           <AnimatePresence mode="popLayout">
             {sortedMints.length === 0 ? (
               <motion.article
@@ -804,34 +576,4 @@ function formatSyncStatus(status: MintSyncStatus) {
   if (status === 'pending_update') return 'Pending update';
   if (status === 'pending_delete') return 'Pending delete';
   return 'Sync error';
-}
-
-function formatMarketplaceDate(isoString: string) {
-  const value = new Date(isoString).toLocaleString('en-IN', {
-    timeZone: 'Asia/Kolkata',
-    month: 'short',
-    day: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true
-  });
-  return `${value} IST`;
-}
-
-function formatTimeUntil(isoString: string, nowMs: number) {
-  const targetMs = new Date(isoString).getTime();
-  if (!Number.isFinite(targetMs)) return 'Unknown time';
-
-  const diffMs = targetMs - nowMs;
-  if (diffMs <= 0) return 'Live or started';
-
-  const totalMinutes = Math.floor(diffMs / (60 * 1000));
-  const days = Math.floor(totalMinutes / (60 * 24));
-  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
-  const minutes = totalMinutes % 60;
-
-  if (days > 0) return `Starts in ${days}d ${hours}h`;
-  if (hours > 0) return `Starts in ${hours}h ${minutes}m`;
-  return `Starts in ${minutes}m`;
 }

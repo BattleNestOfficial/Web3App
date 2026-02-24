@@ -20,6 +20,7 @@ export type FarmingProjectRecord = {
   clientId: string;
   name: string;
   network: string;
+  twitterHandle: string;
   tasks: FarmingTask[];
   claimAt: number | null;
   rewardNotes: string;
@@ -35,6 +36,7 @@ export type FarmingProjectRecord = {
 export type FarmingProjectDraft = {
   name: string;
   network: string;
+  twitterHandle: string;
   tasks: FarmingTask[];
   claimAt: number | null;
   rewardNotes: string;
@@ -49,6 +51,21 @@ class FarmingTrackerDatabase extends Dexie {
     this.version(1).stores({
       projects: '++id,remoteId,clientId,syncStatus,claimAt,deletedAt,createdAt,updatedAt'
     });
+
+    this.version(2)
+      .stores({
+        projects: '++id,remoteId,clientId,syncStatus,claimAt,twitterHandle,deletedAt,createdAt,updatedAt'
+      })
+      .upgrade((tx) =>
+        tx
+          .table('projects')
+          .toCollection()
+          .modify((project) => {
+            if (typeof project.twitterHandle !== 'string') {
+              project.twitterHandle = '';
+            }
+          })
+      );
   }
 }
 
@@ -90,6 +107,14 @@ function normalizeTasks(tasks: FarmingTask[]) {
   return normalized;
 }
 
+function normalizeTwitterHandle(value: string) {
+  const handle = String(value ?? '')
+    .trim()
+    .replace(/^@+/, '')
+    .toLowerCase();
+  return handle;
+}
+
 export function calculateProgress(tasks: FarmingTask[]) {
   if (tasks.length === 0) return 0;
   const completedCount = tasks.filter((task) => task.completed).length;
@@ -99,6 +124,7 @@ export function calculateProgress(tasks: FarmingTask[]) {
 export async function createProject(draft: FarmingProjectDraft) {
   const now = Date.now();
   const tasks = normalizeTasks(draft.tasks);
+  const twitterHandle = normalizeTwitterHandle(draft.twitterHandle);
   const name = draft.name.trim() || 'Untitled project';
   const network = draft.network.trim() || 'Unknown network';
   await farmingDB.projects.add({
@@ -106,6 +132,7 @@ export async function createProject(draft: FarmingProjectDraft) {
     clientId: createClientId(),
     name: draft.name.trim(),
     network: draft.network.trim(),
+    twitterHandle,
     tasks,
     claimAt: draft.claimAt,
     rewardNotes: draft.rewardNotes.trim(),
@@ -122,7 +149,7 @@ export async function createProject(draft: FarmingProjectDraft) {
     source: 'farming',
     action: 'create_project',
     title: 'Farming project added',
-    detail: `${name} | ${network} | tasks ${tasks.length}`,
+    detail: `${name} | ${network} | tasks ${tasks.length}${twitterHandle ? ` | @${twitterHandle}` : ''}`,
     happenedAt: now
   });
 }
@@ -132,6 +159,7 @@ export async function updateProject(id: number, draft: FarmingProjectDraft) {
   if (!existing) return;
 
   const tasks = normalizeTasks(draft.tasks);
+  const twitterHandle = normalizeTwitterHandle(draft.twitterHandle);
   const now = Date.now();
   const name = draft.name.trim() || 'Untitled project';
   const network = draft.network.trim() || 'Unknown network';
@@ -139,6 +167,7 @@ export async function updateProject(id: number, draft: FarmingProjectDraft) {
   await farmingDB.projects.update(id, {
     name: draft.name.trim(),
     network: draft.network.trim(),
+    twitterHandle,
     tasks,
     claimAt: draft.claimAt,
     rewardNotes: draft.rewardNotes.trim(),
@@ -153,7 +182,7 @@ export async function updateProject(id: number, draft: FarmingProjectDraft) {
     source: 'farming',
     action: 'update_project',
     title: 'Farming project updated',
-    detail: `${name} | ${network} | progress ${calculateProgress(tasks)}%`,
+    detail: `${name} | ${network} | progress ${calculateProgress(tasks)}%${twitterHandle ? ` | @${twitterHandle}` : ''}`,
     happenedAt: now
   });
 }

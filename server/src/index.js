@@ -4,14 +4,12 @@ import { env } from './config/env.js';
 import { startAutomationCron } from './jobs/automationCron.js';
 import { startReminderCron } from './jobs/reminderCron.js';
 import { startTwitterTrackerCron } from './jobs/twitterTrackerCron.js';
-import { startWalletTrackerCron } from './jobs/walletTrackerCron.js';
 
 async function start() {
   try {
     await initDb();
     const stopReminderCron = startReminderCron();
     const stopAutomationCron = startAutomationCron();
-    const stopWalletCron = startWalletTrackerCron();
     const stopTwitterCron = startTwitterTrackerCron();
 
     const server = app.listen(env.port, () => {
@@ -22,7 +20,6 @@ async function start() {
     const shutdown = async () => {
       stopReminderCron();
       stopAutomationCron();
-      stopWalletCron();
       stopTwitterCron();
       server.close(async () => {
         await pool.end();

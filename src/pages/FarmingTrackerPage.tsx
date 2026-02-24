@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { AnimatePresence, motion } from 'framer-motion';
-import { BellRing, CheckCircle2, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { AtSign, CheckCircle2, ExternalLink, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -16,13 +16,11 @@ import {
   updateProject
 } from '../features/farming/db';
 import { syncProjectsWithBackend } from '../features/farming/sync';
-import { formatCountdown, formatDateTime, parseOptionalDateInput, toDateTimeLocalValue } from '../features/farming/time';
-import { useNow } from '../features/mints/useNow';
 
 type FormState = {
   name: string;
   network: string;
-  claimDate: string;
+  twitterHandle: string;
   rewardNotes: string;
   tasks: FarmingTask[];
   taskInput: string;
@@ -31,7 +29,7 @@ type FormState = {
 const defaultFormState: FormState = {
   name: '',
   network: '',
-  claimDate: '',
+  twitterHandle: '',
   rewardNotes: '',
   tasks: [],
   taskInput: ''
@@ -44,7 +42,6 @@ export function FarmingTrackerPage() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('Waiting for first sync...');
   const [errorText, setErrorText] = useState('');
-  const now = useNow(1000);
 
   const projects = useLiveQuery(
     async () =>
@@ -58,12 +55,10 @@ export function FarmingTrackerPage() {
     () => sortedProjects.filter((project) => project.syncStatus !== 'synced').length,
     [sortedProjects]
   );
-  const upcomingClaims = useMemo(() => {
-    return sortedProjects
-      .filter((project) => project.claimAt !== null && project.claimAt >= now)
-      .sort((a, b) => (a.claimAt ?? 0) - (b.claimAt ?? 0))
-      .slice(0, 6);
-  }, [sortedProjects, now]);
+  const trackedTaskCount = useMemo(
+    () => sortedProjects.reduce((total, project) => total + project.tasks.length, 0),
+    [sortedProjects]
+  );
   const formProgress = useMemo(() => calculateProgress(form.tasks), [form.tasks]);
 
   const runSync = useCallback(async () => {
@@ -127,12 +122,12 @@ export function FarmingTrackerPage() {
     setIsSubmitting(true);
 
     try {
-      const claimAt = parseOptionalDateInput(form.claimDate);
       const draft: FarmingProjectDraft = {
         name: form.name.trim(),
         network: form.network.trim(),
+        twitterHandle: form.twitterHandle.trim(),
         tasks: form.tasks,
-        claimAt,
+        claimAt: null,
         rewardNotes: form.rewardNotes.trim()
       };
 
@@ -160,8 +155,9 @@ export function FarmingTrackerPage() {
     return {
       name: project.name,
       network: project.network,
+      twitterHandle: String(project.twitterHandle ?? ''),
       tasks: project.tasks,
-      claimAt: project.claimAt,
+      claimAt: null,
       rewardNotes: project.rewardNotes
     };
   }
@@ -173,7 +169,7 @@ export function FarmingTrackerPage() {
     setForm({
       name: project.name,
       network: project.network,
-      claimDate: project.claimAt ? toDateTimeLocalValue(project.claimAt) : '',
+      twitterHandle: String(project.twitterHandle ?? ''),
       rewardNotes: project.rewardNotes,
       tasks: project.tasks,
       taskInput: ''
@@ -244,9 +240,9 @@ export function FarmingTrackerPage() {
               required
             />
             <Input
-              type="datetime-local"
-              value={form.claimDate}
-              onChange={(event) => setForm((prev) => ({ ...prev, claimDate: event.target.value }))}
+              placeholder="Twitter ID (e.g. project_handle)"
+              value={form.twitterHandle}
+              onChange={(event) => setForm((prev) => ({ ...prev, twitterHandle: event.target.value }))}
             />
 
             <div className="space-y-2 rounded-xl border border-slate-700 bg-panelAlt p-3">
@@ -360,7 +356,7 @@ export function FarmingTrackerPage() {
                 Pending sync: <span className="font-semibold text-white">{pendingSyncCount}</span>
               </p>
               <p className="text-sm text-slate-300">
-                Upcoming claim windows: <span className="font-semibold text-white">{upcomingClaims.length}</span>
+                Tracked tasks: <span className="font-semibold text-white">{trackedTaskCount}</span>
               </p>
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
@@ -370,33 +366,6 @@ export function FarmingTrackerPage() {
                 Sync now
               </Button>
             </div>
-          </div>
-
-          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl">
-            <p className="mb-3 text-xs uppercase tracking-[0.14em] text-slate-400">Upcoming Claims</p>
-            {upcomingClaims.length === 0 ? (
-              <p className="text-sm text-slate-300">No claim reminders set.</p>
-            ) : (
-              <ul className="space-y-2">
-                {upcomingClaims.map((project) => (
-                  <li
-                    key={`claim-${project.id ?? project.clientId}`}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2"
-                  >
-                    <div>
-                      <p className="text-sm text-white">{project.name}</p>
-                      <p className="text-xs text-slate-400">{project.network}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs text-slate-400">{project.claimAt ? formatDateTime(project.claimAt) : '-'}</p>
-                      <p className="text-sm font-semibold text-glow">
-                        {project.claimAt ? formatCountdown(project.claimAt, now) : 'Not set'}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
           </div>
 
           <AnimatePresence mode="popLayout">
@@ -415,7 +384,6 @@ export function FarmingTrackerPage() {
                 <ProjectCard
                   key={project.id ?? `${project.clientId}-${index}`}
                   project={project}
-                  now={now}
                   index={index}
                   onEdit={startEdit}
                   onDelete={handleDelete}
@@ -432,20 +400,18 @@ export function FarmingTrackerPage() {
 
 type ProjectCardProps = {
   project: FarmingProjectRecord;
-  now: number;
   index: number;
   onEdit: (project: FarmingProjectRecord) => void;
   onDelete: (id?: number) => Promise<void>;
   onToggleTask: (project: FarmingProjectRecord, taskId: string) => Promise<void>;
 };
 
-function ProjectCard({ project, now, index, onEdit, onDelete, onToggleTask }: ProjectCardProps) {
-  const claimStatus =
-    project.claimAt === null
-      ? 'No reminder'
-      : project.claimAt <= now
-        ? 'Claim now'
-        : formatCountdown(project.claimAt, now);
+function ProjectCard({ project, index, onEdit, onDelete, onToggleTask }: ProjectCardProps) {
+  const normalizedHandle = String(project.twitterHandle ?? '')
+    .trim()
+    .replace(/^@+/, '');
+  const twitterUrl = normalizedHandle ? `https://x.com/${normalizedHandle}` : '';
+  const completedTasks = project.tasks.filter((task) => task.completed).length;
 
   return (
     <motion.article
@@ -489,17 +455,26 @@ function ProjectCard({ project, now, index, onEdit, onDelete, onToggleTask }: Pr
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
-          <p className="text-[11px] uppercase tracking-wide text-slate-400">Claim Reminder</p>
-          <div className="mt-1 flex items-center gap-2">
-            <BellRing className="h-4 w-4 text-glow" />
-            <p className="text-sm font-semibold text-glow">{claimStatus}</p>
-          </div>
-          <p className="mt-1 text-xs text-slate-400">{project.claimAt ? formatDateTime(project.claimAt) : 'Not set'}</p>
+          <p className="text-[11px] uppercase tracking-wide text-slate-400">Twitter</p>
+          {twitterUrl ? (
+            <a
+              href={twitterUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-flex items-center gap-1.5 text-sm text-cyan-200 transition hover:text-cyan-100"
+            >
+              <AtSign className="h-4 w-4" />
+              @{normalizedHandle}
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          ) : (
+            <p className="mt-1 text-sm text-slate-300">Not set</p>
+          )}
         </div>
         <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
           <p className="text-[11px] uppercase tracking-wide text-slate-400">Tasks</p>
           <p className="mt-1 text-sm text-white">
-            {project.tasks.filter((task) => task.completed).length}/{project.tasks.length} completed
+            {completedTasks}/{project.tasks.length} completed
           </p>
         </div>
       </div>

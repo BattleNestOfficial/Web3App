@@ -48,6 +48,7 @@ function validatePayload(body) {
   const clientIdRaw = typeof body.clientId === 'string' ? body.clientId.trim() : '';
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   const network = typeof body.network === 'string' ? body.network.trim() : '';
+  const twitterHandleRaw = typeof body.twitterHandle === 'string' ? body.twitterHandle.trim() : '';
   const claimDateRaw = body.claimDate;
   const rewardNotes = typeof body.rewardNotes === 'string' ? body.rewardNotes.trim() : '';
   const tasks = normalizeTasks(body.tasks);
@@ -58,6 +59,17 @@ function validatePayload(body) {
 
   if (!network) {
     throw new ApiError(400, 'Field "network" is required.');
+  }
+
+  let twitterHandle = '';
+  if (twitterHandleRaw) {
+    twitterHandle = twitterHandleRaw.replace(/^@+/, '').toLowerCase();
+    if (!/^[a-z0-9_]{1,15}$/i.test(twitterHandle)) {
+      throw new ApiError(
+        400,
+        'Field "twitterHandle" must be a valid handle (letters, numbers, underscore, max 15).'
+      );
+    }
   }
 
   let claimDate = null;
@@ -77,6 +89,7 @@ function validatePayload(body) {
     clientId,
     name,
     network,
+    twitterHandle,
     tasks,
     claimDate,
     rewardNotes,

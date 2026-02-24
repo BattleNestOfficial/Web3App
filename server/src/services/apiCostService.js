@@ -1,7 +1,7 @@
 import { pool } from '../config/db.js';
 import { env } from '../config/env.js';
 
-const KNOWN_PROVIDERS = ['openai', 'twitter', 'brevo', 'opensea', 'magiceden', 'rest'];
+const KNOWN_PROVIDERS = ['openai', 'twitter', 'brevo', 'rest'];
 
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
@@ -52,8 +52,6 @@ function normalizeStatusCode(value) {
 
 function defaultUnitCostUsd(provider) {
   if (provider === 'brevo') return toNumber(env.apiCosts.brevoEmailUsd, 0);
-  if (provider === 'opensea') return toNumber(env.apiCosts.openseaRequestUsd, 0);
-  if (provider === 'magiceden') return toNumber(env.apiCosts.magicedenRequestUsd, 0);
   return toNumber(env.apiCosts.genericRequestUsd, 0);
 }
 

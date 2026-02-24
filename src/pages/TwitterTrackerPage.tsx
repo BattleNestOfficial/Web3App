@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { AtSign, ExternalLink, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import {
@@ -15,6 +15,8 @@ import {
 } from '../features/twitterTracker/api';
 
 const RECENT_WINDOW_MS = 48 * 60 * 60 * 1000;
+const AUTO_SYNC_INTERVAL_MS = 45 * 1000;
+const MAX_NOTIFICATIONS_PER_BATCH = 3;
 
 type FormState = {
   handle: string;
@@ -34,15 +36,25 @@ export function TwitterTrackerPage() {
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isAutoSyncing, setIsAutoSyncing] = useState(false);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
+  const [lastAutoSyncAt, setLastAutoSyncAt] = useState<number | null>(null);
+  const [autoSyncMessage, setAutoSyncMessage] = useState('');
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() =>
+    typeof Notification === 'undefined' ? 'denied' : Notification.permission
+  );
   const [isMutatingTrackerId, setIsMutatingTrackerId] = useState<number | null>(null);
   const [errorText, setErrorText] = useState('');
+  const seenTweetKeysRef = useRef(new Set<string>());
+  const hasInitializedMessagesRef = useRef(false);
+  const autoSyncRunRef = useRef(false);
 
   const selectedTracker = useMemo(
     () => trackers.find((tracker) => tracker.id === selectedTrackerId) ?? null,
     [selectedTrackerId, trackers]
   );
 
-  async function loadData(options?: { preserveSelection?: boolean; withLoader?: boolean }) {
+  const loadData = useCallback(async (options?: { preserveSelection?: boolean; withLoader?: boolean }) => {
     const preserveSelection = options?.preserveSelection ?? true;
     const withLoader = options?.withLoader ?? true;
     if (withLoader) setLoading(true);
@@ -66,16 +78,95 @@ export function TwitterTrackerPage() {
     } finally {
       if (withLoader) setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
+    setNotificationPermission(typeof Notification === 'undefined' ? 'denied' : Notification.permission);
     void loadData({ preserveSelection: false, withLoader: true });
+  }, [loadData]);
+
+  const runAutoSyncCycle = useCallback(async () => {
+    if (autoSyncRunRef.current) return;
+    autoSyncRunRef.current = true;
+    setIsAutoSyncing(true);
+    setAutoSyncMessage('');
+
+    try {
+      await syncTwitterTrackers();
+      await loadData({ preserveSelection: true, withLoader: false });
+      setLastAutoSyncAt(Date.now());
+    } catch (error) {
+      setAutoSyncMessage(error instanceof Error ? error.message : 'Auto-sync failed.');
+    } finally {
+      setIsAutoSyncing(false);
+      autoSyncRunRef.current = false;
+    }
+  }, [loadData]);
+
+  useEffect(() => {
+    if (!autoSyncEnabled || trackers.length === 0) return;
+
+    void runAutoSyncCycle();
     const timer = window.setInterval(() => {
-      void loadData({ preserveSelection: true, withLoader: false });
-    }, 45_000);
+      void runAutoSyncCycle();
+    }, AUTO_SYNC_INTERVAL_MS);
+
     return () => window.clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [autoSyncEnabled, runAutoSyncCycle, trackers.length]);
+
+  useEffect(() => {
+    const currentKeys = new Set(messages.map((message) => `${message.tracker_id}:${message.tweet_id}`));
+
+    if (!hasInitializedMessagesRef.current) {
+      seenTweetKeysRef.current = currentKeys;
+      hasInitializedMessagesRef.current = true;
+      return;
+    }
+
+    const newMessages = messages.filter((message) => !seenTweetKeysRef.current.has(`${message.tracker_id}:${message.tweet_id}`));
+    seenTweetKeysRef.current = currentKeys;
+
+    if (newMessages.length === 0) return;
+
+    const mostRecentMessage = newMessages
+      .slice()
+      .sort((a, b) => new Date(b.tweeted_at).getTime() - new Date(a.tweeted_at).getTime())[0];
+    if (mostRecentMessage) {
+      setAutoSyncMessage(
+        `${newMessages.length} new tweet${newMessages.length === 1 ? '' : 's'} detected from tracked handles.`
+      );
+    }
+
+    if (notificationPermission !== 'granted' || typeof Notification === 'undefined') return;
+
+    newMessages.slice(0, MAX_NOTIFICATIONS_PER_BATCH).forEach((message) => {
+      const body = message.tweet_text.length > 140 ? `${message.tweet_text.slice(0, 140)}...` : message.tweet_text;
+      new Notification(`@${message.author_handle} posted`, {
+        body,
+        tag: `tweet-${message.tracker_id}-${message.tweet_id}`
+      });
+    });
+  }, [messages, notificationPermission]);
+
+  async function enableBrowserAlerts() {
+    if (typeof Notification === 'undefined') {
+      setAutoSyncMessage('Browser notifications are not supported in this environment.');
+      setNotificationPermission('denied');
+      return;
+    }
+    if (Notification.permission === 'granted') {
+      setNotificationPermission('granted');
+      setAutoSyncMessage('Browser alerts are already enabled.');
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+    if (permission === 'granted') {
+      setAutoSyncMessage('Browser alerts enabled for new tweets.');
+    } else {
+      setAutoSyncMessage('Browser alerts are blocked. Enable notifications in browser settings.');
+    }
+  }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -134,6 +225,7 @@ export function TwitterTrackerPage() {
     try {
       await syncTwitterTrackers(trackerId);
       await loadData({ preserveSelection: true, withLoader: false });
+      setLastAutoSyncAt(Date.now());
     } catch (error) {
       setErrorText(error instanceof Error ? error.message : 'Failed to sync tweets.');
     } finally {
@@ -161,6 +253,32 @@ export function TwitterTrackerPage() {
         <p className="mt-2 text-sm text-slate-400">
           Tracks only new posts after you add a handle. Panel shows recent items (last 48 hours).
         </p>
+        <div className="mt-3 rounded-xl border border-cyan-300/25 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
+          <p>
+            Auto-sync: {autoSyncEnabled ? 'ON' : 'OFF'} (every {Math.floor(AUTO_SYNC_INTERVAL_MS / 1000)}s)
+            {isAutoSyncing ? ' | Syncing now...' : ''}
+            {lastAutoSyncAt ? ` | Last sync: ${new Date(lastAutoSyncAt).toLocaleString()}` : ''}
+          </p>
+          {autoSyncMessage ? <p className="mt-1 text-cyan-200">{autoSyncMessage}</p> : null}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant={autoSyncEnabled ? 'secondary' : 'ghost'}
+              className="h-8 px-2.5 text-xs"
+              onClick={() => setAutoSyncEnabled((prev) => !prev)}
+            >
+              {autoSyncEnabled ? 'Pause Auto-Sync' : 'Enable Auto-Sync'}
+            </Button>
+            <Button
+              type="button"
+              variant={notificationPermission === 'granted' ? 'secondary' : 'ghost'}
+              className="h-8 px-2.5 text-xs"
+              onClick={() => void enableBrowserAlerts()}
+            >
+              Alerts: {notificationPermission}
+            </Button>
+          </div>
+        </div>
       </header>
 
       <div className="grid gap-4 lg:grid-cols-[1.05fr_1.6fr]">

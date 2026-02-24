@@ -23,7 +23,7 @@ function getPageMeta(pathname: string) {
   if (pathname.startsWith('/nft-mints') || pathname.startsWith('/mints'))
     return { title: 'NFT Mint Scheduler', subtitle: 'Mints, reminders, countdowns' };
   if (pathname.startsWith('/farming'))
-    return { title: 'Projects / Testnets', subtitle: 'Projects, testnets, claims, and execution' };
+    return { title: 'Projects / Testnets', subtitle: 'Projects, testnets, tasks, and updates' };
   if (pathname.startsWith('/todo')) return { title: 'Task Ops', subtitle: 'Execution queue and day planner' };
   if (pathname.startsWith('/twitter-tracker') || pathname.startsWith('/wallet-tracker'))
     return { title: 'Twitter Tracker', subtitle: 'Track new tweets from selected handles' };

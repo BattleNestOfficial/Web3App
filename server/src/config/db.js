@@ -66,6 +66,7 @@ export async function initDb() {
       client_id TEXT,
       name TEXT NOT NULL,
       network TEXT NOT NULL,
+      twitter_handle TEXT,
       tasks JSONB NOT NULL DEFAULT '[]'::jsonb,
       claim_date TIMESTAMPTZ,
       reward_notes TEXT,
@@ -76,6 +77,7 @@ export async function initDb() {
   `);
 
   await pool.query(`ALTER TABLE farming_projects ADD COLUMN IF NOT EXISTS client_id TEXT;`);
+  await pool.query(`ALTER TABLE farming_projects ADD COLUMN IF NOT EXISTS twitter_handle TEXT;`);
   await pool.query(
     `UPDATE farming_projects SET client_id = CONCAT('legacy-farm-', id) WHERE client_id IS NULL OR client_id = '';`
   );

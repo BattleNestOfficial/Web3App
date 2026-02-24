@@ -14,8 +14,10 @@ export type SyncResult = {
   message: string;
 };
 
-function normalize(value: string) {
-  return value.trim().toLowerCase();
+function normalize(value: string | null | undefined) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase();
 }
 
 function tasksFingerprint(tasks: FarmingTask[]) {
@@ -28,6 +30,7 @@ function tasksFingerprint(tasks: FarmingTask[]) {
 function projectFingerprint(input: {
   name: string;
   network: string;
+  twitterHandle: string;
   tasks: FarmingTask[];
   claimAt: number | null;
   rewardNotes: string;
@@ -36,6 +39,7 @@ function projectFingerprint(input: {
   return [
     normalize(input.name),
     normalize(input.network),
+    normalize(input.twitterHandle),
     tasksFingerprint(input.tasks),
     String(input.claimAt ?? 0),
     normalize(input.rewardNotes),
@@ -103,6 +107,7 @@ async function syncPendingUpserts() {
         clientId: remoteProject.clientId,
         name: remoteProject.name,
         network: remoteProject.network,
+        twitterHandle: remoteProject.twitterHandle,
         tasks: remoteProject.tasks,
         claimAt: remoteProject.claimAt,
         rewardNotes: remoteProject.rewardNotes,
@@ -144,6 +149,7 @@ async function mergeRemoteProjects() {
         projectFingerprint({
           name: localProject.name,
           network: localProject.network,
+          twitterHandle: localProject.twitterHandle,
           tasks: localProject.tasks,
           claimAt: localProject.claimAt,
           rewardNotes: localProject.rewardNotes,
@@ -158,6 +164,7 @@ async function mergeRemoteProjects() {
     const fingerprint = projectFingerprint({
       name: remoteProject.name,
       network: remoteProject.network,
+      twitterHandle: remoteProject.twitterHandle,
       tasks: remoteProject.tasks,
       claimAt: remoteProject.claimAt,
       rewardNotes: remoteProject.rewardNotes,
@@ -188,6 +195,7 @@ async function mergeRemoteProjects() {
         clientId: remoteProject.clientId,
         name: remoteProject.name,
         network: remoteProject.network,
+        twitterHandle: remoteProject.twitterHandle,
         tasks: remoteProject.tasks,
         claimAt: remoteProject.claimAt,
         rewardNotes: remoteProject.rewardNotes,
@@ -207,6 +215,7 @@ async function mergeRemoteProjects() {
       clientId: remoteProject.clientId,
       name: remoteProject.name,
       network: remoteProject.network,
+      twitterHandle: remoteProject.twitterHandle,
       tasks: remoteProject.tasks,
       claimAt: remoteProject.claimAt,
       rewardNotes: remoteProject.rewardNotes,
