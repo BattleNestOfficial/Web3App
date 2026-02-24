@@ -239,6 +239,50 @@ export async function initDb() {
   );
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS twitter_trackers (
+      id SERIAL PRIMARY KEY,
+      handle TEXT NOT NULL,
+      display_label TEXT,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      last_checked_at TIMESTAMPTZ,
+      last_tweet_at TIMESTAMPTZ,
+      last_tweet_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (handle)
+    );
+  `);
+
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS twitter_trackers_enabled_idx
+     ON twitter_trackers(enabled, updated_at DESC);`
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS twitter_messages (
+      id SERIAL PRIMARY KEY,
+      tracker_id INTEGER NOT NULL REFERENCES twitter_trackers(id) ON DELETE CASCADE,
+      tweet_id TEXT NOT NULL,
+      tweet_text TEXT NOT NULL,
+      tweet_url TEXT,
+      tweeted_at TIMESTAMPTZ NOT NULL,
+      author_handle TEXT NOT NULL,
+      payload JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (tracker_id, tweet_id)
+    );
+  `);
+
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS twitter_messages_tracker_idx
+     ON twitter_messages(tracker_id, tweeted_at DESC);`
+  );
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS twitter_messages_tweeted_at_idx
+     ON twitter_messages(tweeted_at DESC);`
+  );
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS automation_runs (
       id SERIAL PRIMARY KEY,
       workflow_key TEXT NOT NULL,

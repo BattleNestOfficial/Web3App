@@ -3,11 +3,22 @@ import { recordApiUsageSafely } from './apiCostService.js';
 
 const OPEN_SEA_UPCOMING_DROPS_URL = 'https://opensea.io/drops/upcoming';
 const OPEN_SEA_API_BASE_URL = 'https://api.opensea.io/api/v2';
+const PROVIDER_ALL = 'all';
+const PROVIDER_MAGICEDEN = 'magiceden';
+const PROVIDER_OPENSEA = 'opensea';
 
 function clampNumber(value, min, max, fallback) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.max(min, Math.min(max, Math.floor(numeric)));
+}
+
+function normalizeProvider(value) {
+  const text = String(value ?? '').trim().toLowerCase();
+  if (text === PROVIDER_MAGICEDEN || text === PROVIDER_OPENSEA) {
+    return text;
+  }
+  return PROVIDER_ALL;
 }
 
 function normalizeDateToIso(value) {
@@ -56,6 +67,22 @@ function compactString(value) {
 }
 
 function summarizeHttpBody(body, maxLen = 220) {
+  const raw = String(body ?? '').trim();
+  if (!raw) return '';
+
+  try {
+    const parsed = JSON.parse(raw);
+    const apiMessage =
+      compactString(parsed?.error?.message) ??
+      compactString(parsed?.message) ??
+      compactString(parsed?.error_description);
+    if (apiMessage) {
+      return apiMessage.length > maxLen ? `${apiMessage.slice(0, maxLen)}...` : apiMessage;
+    }
+  } catch {
+    // Ignore JSON parsing errors and continue with HTML/text summarization.
+  }
+
   const text = String(body ?? '')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -143,10 +170,20 @@ function mapMagicEdenMint(item) {
     normalizeDateToIso(item?.launch_datetime) ??
     normalizeDateToIso(item?.launchDateTime) ??
     normalizeDateToIso(item?.launchDate) ??
+    normalizeDateToIso(item?.startTime) ??
+    normalizeDateToIso(item?.start_time) ??
+    normalizeDateToIso(item?.startDate) ??
+    normalizeDateToIso(item?.start_date) ??
     normalizeDateToIso(item?.mintStartTime) ??
     normalizeDateToIso(item?.mint_start_time) ??
+    normalizeDateToIso(item?.mintStartDate) ??
+    normalizeDateToIso(item?.mint_start_date) ??
     normalizeDateToIso(item?.goLiveDate) ??
-    normalizeDateToIso(item?.go_live_date);
+    normalizeDateToIso(item?.go_live_date) ??
+    normalizeDateToIso(item?.goLiveTime) ??
+    normalizeDateToIso(item?.go_live_time) ??
+    normalizeDateToIso(item?.mint?.startTime) ??
+    normalizeDateToIso(item?.mint?.start_time);
   if (!startsAt) return null;
 
   const slug =
@@ -306,9 +343,13 @@ async function fetchMagicEdenUpcomingMints({ limit, fromMs, toMs }) {
         ? payload.collections
         : Array.isArray(payload?.data)
           ? payload.data
-          : Array.isArray(payload?.launches)
-            ? payload.launches
-            : [];
+          : Array.isArray(payload?.results)
+            ? payload.results
+            : Array.isArray(payload?.items)
+              ? payload.items
+            : Array.isArray(payload?.launches)
+              ? payload.launches
+              : [];
 
     const mapped = rows
       .map(mapMagicEdenMint)
@@ -332,84 +373,100 @@ async function fetchMagicEdenUpcomingMints({ limit, fromMs, toMs }) {
 }
 
 async function fetchOpenSeaUpcomingMints({ limit, fromMs, toMs }) {
-  const fromApi = await fetchOpenSeaUpcomingMintsFromApi({ limit, fromMs, toMs });
+  let fromApi = [];
+  let apiFailure = null;
+  try {
+    fromApi = await fetchOpenSeaUpcomingMintsFromApi({ limit, fromMs, toMs });
+  } catch (error) {
+    apiFailure = summarizeErrorMessage(error);
+  }
+
   if (fromApi.length > 0) {
     return fromApi;
   }
 
-  const startedAt = Date.now();
-  const response = await fetch(OPEN_SEA_UPCOMING_DROPS_URL, {
-    method: 'GET',
-    headers: {
-      Accept: 'text/html',
-      'User-Agent': 'Mozilla/5.0 (compatible; MintCalendarBot/1.0)'
-    }
-  });
+  try {
+    const startedAt = Date.now();
+    const response = await fetch(OPEN_SEA_UPCOMING_DROPS_URL, {
+      method: 'GET',
+      headers: {
+        Accept: 'text/html',
+        'User-Agent': 'Mozilla/5.0 (compatible; MintCalendarBot/1.0)'
+      }
+    });
 
-  void recordApiUsageSafely({
-    providerKey: 'opensea',
-    operation: 'marketplace_upcoming_mints_html_fallback',
-    endpoint: OPEN_SEA_UPCOMING_DROPS_URL,
-    requestCount: 1,
-    statusCode: response.status,
-    success: response.ok,
-    metadata: {
-      service: 'marketplace_mint_calendar',
-      durationMs: Date.now() - startedAt
-    }
-  });
+    void recordApiUsageSafely({
+      providerKey: 'opensea',
+      operation: 'marketplace_upcoming_mints_html_fallback',
+      endpoint: OPEN_SEA_UPCOMING_DROPS_URL,
+      requestCount: 1,
+      statusCode: response.status,
+      success: response.ok,
+      metadata: {
+        service: 'marketplace_mint_calendar',
+        durationMs: Date.now() - startedAt
+      }
+    });
 
-  if (!response.ok) {
-    const body = await response.text();
-    const detail = summarizeHttpBody(body);
-    const cloudflareBlocked =
-      response.status === 403 && /just a moment|cf_chl|cloudflare|__cf_chl/i.test(String(body));
-    if (cloudflareBlocked) {
+    if (!response.ok) {
+      const body = await response.text();
+      const detail = summarizeHttpBody(body);
+      const cloudflareBlocked =
+        response.status === 403 && /just a moment|cf_chl|cloudflare|__cf_chl/i.test(String(body));
+      if (cloudflareBlocked) {
+        throw new Error(
+          'OpenSea HTML fallback blocked by Cloudflare (403). Configure OPENSEA_API_KEY so OpenSea API can be used.'
+        );
+      }
       throw new Error(
-        'OpenSea HTML fallback blocked by Cloudflare (403). Configure OPENSEA_API_KEY so OpenSea API can be used.'
+        `OpenSea drops page request failed (${response.status})${detail ? `: ${detail}` : ''}`
       );
     }
-    throw new Error(
-      `OpenSea drops page request failed (${response.status})${detail ? `: ${detail}` : ''}`
-    );
-  }
 
-  const html = await response.text();
-  const parsedFromEmbeddedJson = extractOpenSeaFromEmbeddedJson(html, fromMs, toMs, limit);
-  if (parsedFromEmbeddedJson.length > 0) {
-    return parsedFromEmbeddedJson;
-  }
-
-  const marker = '{"__typename":"Erc721SeaDropV1","identifier":';
-  const parsedDrops = [];
-  let fromIndex = 0;
-
-  while (true) {
-    const start = html.indexOf(marker, fromIndex);
-    if (start === -1) break;
-    const rawJson = parseJsonObjectAt(html, start);
-    if (!rawJson) break;
-
-    try {
-      const drop = JSON.parse(rawJson);
-      parsedDrops.push(drop);
-    } catch {
-      // Ignore malformed JSON chunks.
+    const html = await response.text();
+    const parsedFromEmbeddedJson = extractOpenSeaFromEmbeddedJson(html, fromMs, toMs, limit);
+    if (parsedFromEmbeddedJson.length > 0) {
+      return parsedFromEmbeddedJson;
     }
 
-    fromIndex = start + marker.length;
-  }
+    const marker = '{"__typename":"Erc721SeaDropV1","identifier":';
+    const parsedDrops = [];
+    let fromIndex = 0;
 
-  return dedupeById(
-    parsedDrops
-      .map((drop) => mapOpenSeaDrop(drop, fromMs))
-      .filter(Boolean)
-      .filter((item) => {
-        const startMs = new Date(item.startsAt).getTime();
-        return Number.isFinite(startMs) && startMs >= fromMs && startMs <= toMs;
-      })
-      .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
-  ).slice(0, limit);
+    while (true) {
+      const start = html.indexOf(marker, fromIndex);
+      if (start === -1) break;
+      const rawJson = parseJsonObjectAt(html, start);
+      if (!rawJson) break;
+
+      try {
+        const drop = JSON.parse(rawJson);
+        parsedDrops.push(drop);
+      } catch {
+        // Ignore malformed JSON chunks.
+      }
+
+      fromIndex = start + marker.length;
+    }
+
+    return dedupeById(
+      parsedDrops
+        .map((drop) => mapOpenSeaDrop(drop, fromMs))
+        .filter(Boolean)
+        .filter((item) => {
+          const startMs = new Date(item.startsAt).getTime();
+          return Number.isFinite(startMs) && startMs >= fromMs && startMs <= toMs;
+        })
+        .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
+    ).slice(0, limit);
+  } catch (fallbackError) {
+    if (apiFailure) {
+      throw new Error(
+        `OpenSea upcoming mint fetch failed. API: ${apiFailure}. Fallback: ${summarizeErrorMessage(fallbackError)}`
+      );
+    }
+    throw fallbackError;
+  }
 }
 
 function extractOpenSeaFromEmbeddedJson(html, fromMs, toMs, limit) {
@@ -505,6 +562,7 @@ async function fetchOpenSeaUpcomingMintsFromApi({ limit, fromMs, toMs }) {
 
   let authError = null;
   let lastError = null;
+  let notFoundCount = 0;
 
   for (const endpoint of endpoints) {
     const startedAt = Date.now();
@@ -556,6 +614,10 @@ async function fetchOpenSeaUpcomingMintsFromApi({ limit, fromMs, toMs }) {
         }`;
         continue;
       }
+      if (response.status === 404) {
+        notFoundCount += 1;
+        continue;
+      }
       lastError = `OpenSea API request failed (${response.status})${detail ? `: ${detail}` : ''}`;
       continue;
     }
@@ -584,6 +646,10 @@ async function fetchOpenSeaUpcomingMintsFromApi({ limit, fromMs, toMs }) {
   if (authError) {
     throw new Error(authError);
   }
+  if (notFoundCount === endpoints.length) {
+    // Endpoint family not available for this key/region/version; let caller try HTML fallback.
+    return [];
+  }
   if (lastError) {
     throw new Error(lastError);
   }
@@ -593,24 +659,34 @@ async function fetchOpenSeaUpcomingMintsFromApi({ limit, fromMs, toMs }) {
 export async function getUpcomingMarketplaceMints(options = {}) {
   const limit = clampNumber(options.limit, 1, 100, 30);
   const days = clampNumber(options.days, 1, 180, 30);
+  const provider = normalizeProvider(options.provider);
   const nowMs = Date.now();
   const horizonMs = nowMs + days * 24 * 60 * 60 * 1000;
 
+  const shouldQueryMagicEden = provider === PROVIDER_ALL || provider === PROVIDER_MAGICEDEN;
+  const shouldQueryOpenSea = provider === PROVIDER_ALL || provider === PROVIDER_OPENSEA;
+
   const [magicEdenResult, openSeaResult] = await Promise.allSettled([
-    fetchMagicEdenUpcomingMints({ limit, fromMs: nowMs, toMs: horizonMs }),
-    fetchOpenSeaUpcomingMints({ limit, fromMs: nowMs, toMs: horizonMs })
+    shouldQueryMagicEden ? fetchMagicEdenUpcomingMints({ limit, fromMs: nowMs, toMs: horizonMs }) : Promise.resolve([]),
+    shouldQueryOpenSea ? fetchOpenSeaUpcomingMints({ limit, fromMs: nowMs, toMs: horizonMs }) : Promise.resolve([])
   ]);
 
   const providerStatus = {
     magiceden: {
-      ok: magicEdenResult.status === 'fulfilled',
+      ok: shouldQueryMagicEden ? magicEdenResult.status === 'fulfilled' : true,
       count: magicEdenResult.status === 'fulfilled' ? magicEdenResult.value.length : 0,
-      error: magicEdenResult.status === 'rejected' ? summarizeErrorMessage(magicEdenResult.reason) : null
+      error:
+        shouldQueryMagicEden && magicEdenResult.status === 'rejected'
+          ? summarizeErrorMessage(magicEdenResult.reason)
+          : null
     },
     opensea: {
-      ok: openSeaResult.status === 'fulfilled',
+      ok: shouldQueryOpenSea ? openSeaResult.status === 'fulfilled' : true,
       count: openSeaResult.status === 'fulfilled' ? openSeaResult.value.length : 0,
-      error: openSeaResult.status === 'rejected' ? summarizeErrorMessage(openSeaResult.reason) : null
+      error:
+        shouldQueryOpenSea && openSeaResult.status === 'rejected'
+          ? summarizeErrorMessage(openSeaResult.reason)
+          : null
     }
   };
 
@@ -627,6 +703,7 @@ export async function getUpcomingMarketplaceMints(options = {}) {
       fetchedAt: new Date().toISOString(),
       days,
       limit,
+      provider,
       providers: providerStatus
     }
   };

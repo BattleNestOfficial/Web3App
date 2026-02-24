@@ -26,6 +26,7 @@ export type MarketplaceMintCalendarMeta = {
   fetchedAt: string;
   days: number;
   limit: number;
+  provider?: 'all' | 'magiceden' | 'opensea' | string;
   providers: {
     magiceden: {
       ok: boolean;
@@ -40,13 +41,18 @@ export type MarketplaceMintCalendarMeta = {
   };
 };
 
-export async function fetchUpcomingMarketplaceMints(params?: { limit?: number; days?: number }) {
+export async function fetchUpcomingMarketplaceMints(params?: {
+  limit?: number;
+  days?: number;
+  provider?: 'all' | 'magiceden' | 'opensea';
+}) {
   const query = new URLSearchParams();
   if (params?.limit) {
     const safeLimit = Math.min(100, Math.max(1, Math.trunc(params.limit)));
     query.set('limit', String(safeLimit));
   }
   if (params?.days) query.set('days', String(params.days));
+  if (params?.provider) query.set('provider', params.provider);
   const suffix = query.toString() ? `?${query.toString()}` : '';
 
   try {
@@ -69,6 +75,7 @@ export async function fetchUpcomingMarketplaceMints(params?: { limit?: number; d
 
     const fallbackQuery = new URLSearchParams();
     if (params?.days) fallbackQuery.set('days', String(params.days));
+    if (params?.provider) fallbackQuery.set('provider', params.provider);
     const fallbackSuffix = fallbackQuery.toString() ? `?${fallbackQuery.toString()}` : '';
     const fallbackResponse = await apiRequest<ApiResponse<MarketplaceMintItem[]>>(
       `/marketplace-mints/upcoming${fallbackSuffix}`,

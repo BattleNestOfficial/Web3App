@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import {
+  AtSign,
   BarChart3,
   Bug,
   CalendarClock,
@@ -9,7 +10,6 @@ import {
   Settings,
   ShieldCheck,
   Sprout,
-  Wallet,
   X
 } from 'lucide-react';
 import { useMemo, useEffect } from 'react';
@@ -28,7 +28,7 @@ type SidebarItem = {
 const items: SidebarItem[] = [
   { label: 'Overview', to: '/dashboard', icon: Gauge, section: 'Command' },
   { label: 'Analytics', to: '/analytics', icon: BarChart3, section: 'Command' },
-  { label: 'Wallet Tracker', to: '/wallet-tracker', icon: Wallet, section: 'Command' },
+  { label: 'Twitter Tracker', to: '/twitter-tracker', icon: AtSign, section: 'Command' },
   { label: 'NFT Mint Scheduler', to: '/nft-mints', icon: CalendarClock, section: 'Execution' },
   { label: 'Projects / Testnets', to: '/farming', icon: Sprout, section: 'Execution' },
   { label: 'To-Do Ops', to: '/todo', icon: ListTodo, section: 'Execution' },

@@ -25,8 +25,8 @@ function getPageMeta(pathname: string) {
   if (pathname.startsWith('/farming'))
     return { title: 'Projects / Testnets', subtitle: 'Projects, testnets, claims, and execution' };
   if (pathname.startsWith('/todo')) return { title: 'Task Ops', subtitle: 'Execution queue and day planner' };
-  if (pathname.startsWith('/wallet-tracker'))
-    return { title: 'Wallet Surveillance', subtitle: 'Track wallet events and alert signals' };
+  if (pathname.startsWith('/twitter-tracker') || pathname.startsWith('/wallet-tracker'))
+    return { title: 'Twitter Tracker', subtitle: 'Track new tweets from selected handles' };
   if (pathname.startsWith('/bugs')) return { title: 'Bug Tracker', subtitle: 'Issue triage and incident lifecycle' };
   if (pathname.startsWith('/api-costs')) return { title: 'API Cost Tracker', subtitle: 'Provider spend observability' };
   if (pathname.startsWith('/projects')) return { title: 'Project Hub', subtitle: 'Project-level workspace control' };

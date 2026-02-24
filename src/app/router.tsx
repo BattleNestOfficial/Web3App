@@ -11,7 +11,7 @@ import { NotFoundPage } from '../pages/NotFoundPage';
 import { ProjectsPage } from '../pages/ProjectsPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { TodoPage } from '../pages/TodoPage';
-import { WalletTrackerPage } from '../pages/WalletTrackerPage';
+import { TwitterTrackerPage } from '../pages/TwitterTrackerPage';
 import { ProtectedRoute } from './routes/ProtectedRoute';
 
 export const router = createBrowserRouter([
@@ -58,8 +58,12 @@ export const router = createBrowserRouter([
             element: <TodoPage />
           },
           {
+            path: '/twitter-tracker',
+            element: <TwitterTrackerPage />
+          },
+          {
             path: '/wallet-tracker',
-            element: <WalletTrackerPage />
+            element: <Navigate to="/twitter-tracker" replace />
           },
           {
             path: '/journal',

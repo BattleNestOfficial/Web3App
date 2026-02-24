@@ -487,16 +487,6 @@ export function DashboardPage() {
       });
     }
 
-    if (walletPulse.sellCount > walletPulse.buyCount) {
-      directives.push({
-        id: 'wallet-balance',
-        title: 'Review wallet outflow trend',
-        detail: `24h sells (${walletPulse.sellCount}) exceed buys (${walletPulse.buyCount}).`,
-        route: '/wallet-tracker',
-        severity: 'watch'
-      });
-    }
-
     if (directives.length === 0) {
       directives.push({
         id: 'steady-state',
@@ -508,7 +498,7 @@ export function DashboardPage() {
     }
 
     return directives.slice(0, 4);
-  }, [farmingOps.claimsDue24h, farmingOps.staleProjects, jarvisPriorityStats.overdueCount, nextTrackedMint, nowTick, walletPulse.buyCount, walletPulse.sellCount]);
+  }, [farmingOps.claimsDue24h, farmingOps.staleProjects, jarvisPriorityStats.overdueCount, nextTrackedMint, nowTick]);
 
   useEffect(() => {
     persistFlag('jarvis_automation_enabled', jarvisAutomationEnabled);
@@ -834,8 +824,8 @@ export function DashboardPage() {
             <Button type="button" variant="secondary" className="h-9 justify-start px-3 text-xs" onClick={() => navigate('/farming')}>
               Update Project Progress
             </Button>
-            <Button type="button" variant="secondary" className="h-9 justify-start px-3 text-xs" onClick={() => navigate('/wallet-tracker')}>
-              Manage Wallet Trackers
+            <Button type="button" variant="secondary" className="h-9 justify-start px-3 text-xs" onClick={() => navigate('/twitter-tracker')}>
+              Open Twitter Tracker
             </Button>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">

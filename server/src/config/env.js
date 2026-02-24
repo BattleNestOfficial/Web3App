@@ -122,6 +122,15 @@ export const env = {
       evmChain: getOptionalEnv('MAGICEDEN_EVM_CHAIN', 'ethereum')
     }
   },
+  twitterTracker: {
+    enabled: parseOptionalBoolean('TWITTER_TRACKER_ENABLED', true),
+    pollIntervalSeconds: parseOptionalNumber('TWITTER_TRACKER_POLL_INTERVAL_SECONDS', 60),
+    requestTimeoutMs: parseOptionalNumber('TWITTER_TRACKER_REQUEST_TIMEOUT_MS', 15000),
+    maxTweetsPerHandle: parseOptionalNumber('TWITTER_TRACKER_MAX_TWEETS_PER_HANDLE', 10),
+    apiBaseUrl: getOptionalEnv('TWITTER_API_BASE_URL', 'https://api.twitter.com/2'),
+    bearerToken: getOptionalEnv('TWITTER_BEARER_TOKEN'),
+    nitterBaseUrl: getOptionalEnv('TWITTER_NITTER_BASE_URL', 'https://nitter.net')
+  },
   automation: {
     payPerUseEnabled: parseOptionalBoolean('AUTOMATION_PAY_PER_USE_ENABLED', false),
     currency: getOptionalEnv('AUTOMATION_CURRENCY', 'USD'),

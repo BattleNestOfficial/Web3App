@@ -32,6 +32,7 @@ function shortAddress(value: string) {
 
 function sourceLabel(source: AppActivitySource) {
   if (source === 'wallet_tracker') return 'Wallet Tracker';
+  if (source === 'twitter_tracker') return 'Twitter Tracker';
   if (source === 'mint_tracker') return 'Mint Tracker';
   if (source === 'todo') return 'To-Do';
   if (source === 'productivity') return 'Productivity';

@@ -3,6 +3,7 @@ import Dexie, { type Table } from 'dexie';
 export type AppActivitySource =
   | 'mint_tracker'
   | 'wallet_tracker'
+  | 'twitter_tracker'
   | 'todo'
   | 'productivity'
   | 'analytics'

@@ -1,7 +1,7 @@
 import { pool } from '../config/db.js';
 import { env } from '../config/env.js';
 
-const KNOWN_PROVIDERS = ['openai', 'brevo', 'opensea', 'magiceden', 'rest'];
+const KNOWN_PROVIDERS = ['openai', 'twitter', 'brevo', 'opensea', 'magiceden', 'rest'];
 
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);

@@ -195,7 +195,7 @@ export function MintTrackerPage() {
       setMarketplaceError('');
 
       try {
-        const response = await fetchUpcomingMarketplaceMints({ days: 90, limit: 100 });
+        const response = await fetchUpcomingMarketplaceMints({ days: 90, limit: 100, provider: 'magiceden' });
         if (!isMounted) return;
         setMarketplaceMints(response.data);
         setMarketplaceMeta(response.meta);
@@ -227,7 +227,7 @@ export function MintTrackerPage() {
     setIsMarketplaceRefreshing(true);
     setMarketplaceError('');
     try {
-      const response = await fetchUpcomingMarketplaceMints({ days: 90, limit: 100 });
+      const response = await fetchUpcomingMarketplaceMints({ days: 90, limit: 100, provider: 'magiceden' });
       setMarketplaceMints(response.data);
       setMarketplaceMeta(response.meta);
     } catch (error) {
@@ -529,7 +529,7 @@ export function MintTrackerPage() {
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-xl">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs uppercase tracking-[0.14em] text-slate-400">NFT Calendar (All Upcoming)</p>
+              <p className="text-xs uppercase tracking-[0.14em] text-slate-400">NFT Calendar (Magic Eden Upcoming)</p>
               <Button
                 type="button"
                 variant="ghost"
@@ -545,9 +545,6 @@ export function MintTrackerPage() {
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <span className="rounded-full border border-cyan-300/35 bg-cyan-300/10 px-2 py-0.5 text-xs text-cyan-200">
                 Magic Eden: {marketplaceMeta?.providers.magiceden.count ?? 0}
-              </span>
-              <span className="rounded-full border border-emerald-300/35 bg-emerald-300/10 px-2 py-0.5 text-xs text-emerald-200">
-                OpenSea: {marketplaceMeta?.providers.opensea.count ?? 0}
               </span>
             </div>
 
@@ -595,7 +592,7 @@ export function MintTrackerPage() {
               <div className="rounded-2xl border border-dashed border-slate-700/80 bg-panel/60 px-3 py-5 text-sm text-slate-300">
                 No upcoming marketplace mints found for the selected window.
                 {marketplaceProviderIssues.length > 0
-                  ? ' Provider errors are shown above. Verify OPENSEA_API_KEY / MAGICEDEN_API_KEY and refresh.'
+                  ? ' Provider errors are shown above. Verify MAGICEDEN_API_KEY and refresh.'
                   : ''}
               </div>
             ) : (
